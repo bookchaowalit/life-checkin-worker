@@ -77,7 +77,7 @@ describe('worker', () => {
       expect(c.init.method).toBe('POST');
       expect(h.Authorization).toBe('Bearer cell-token');
       expect(h['X-Empire-Channel']).toBe('workflow');
-      expect(h['Idempotency-Key']).toContain('77');
+      expect(h['Idempotency-Key']).toContain('1001:5');
       keys.add(h['Idempotency-Key']);
     }
     expect(keys.size).toBe(cells.length);
@@ -101,19 +101,21 @@ describe('worker', () => {
     expect(res.status).toBe(200);
     expect(cellCalls().filter((c) => c.url.startsWith('https://time.test'))).toHaveLength(2);
     const text = sentText(telegramCalls()[0]);
-    expect(text).toContain('403');
+    expect(text).toContain('นอน 7 ชม. (HTTP 403)');
   });
 
   it('AC-09 sends the prompt on cron and on /checkin', async () => {
     await worker.scheduled({ cron: '30 14 * * *', scheduledTime: Date.parse('2026-10-22T14:30:00Z') } as ScheduledController, env, ctx);
     expect(telegramCalls()).toHaveLength(1);
     const prompt = sentText(telegramCalls()[0]);
+    expect(prompt).toContain('เช็คอินตอนค่ำ');
     expect(prompt).toContain('22');
     expect(prompt).toContain('นอน');
     expect(JSON.parse(String(telegramCalls()[0].init.body)).chat_id).toBe('1001');
     calls = [];
     await worker.fetch(post(update('/checkin')), env, ctx);
     expect(telegramCalls()).toHaveLength(1);
+    expect(sentText(telegramCalls()[0])).toContain('เช็คอินตอนค่ำ');
     expect(cellCalls()).toEqual([]);
   });
 
@@ -121,8 +123,13 @@ describe('worker', () => {
     await worker.fetch(post(update(undefined)), env, ctx);
     expect(calls).toEqual([]);
     await worker.fetch(post(update('/start')), env, ctx);
+    await worker.fetch(post(update('/help')), env, ctx);
     expect(cellCalls()).toEqual([]);
-    expect(telegramCalls()).toHaveLength(1);
+    expect(telegramCalls()).toHaveLength(2);
+    for (const c of telegramCalls()) expect(sentText(c)).toContain('/checkin ส่งคำถาม');
+    calls = [];
+    await worker.fetch(post(update('/checkin@otherbot')), env, ctx);
+    expect(calls).toEqual([]);
   });
 
   it('AC-11 health endpoint', async () => {
@@ -132,5 +139,65 @@ describe('worker', () => {
     expect(JSON.parse(body)).toEqual({ ok: true, service: 'solo-empire-checkin' });
     for (const v of Object.values(env)) expect(body).not.toContain(v);
     expect((await worker.fetch(new Request('https://checkin.test/nope'), env, ctx)).status).toBe(404);
+  });
+});
+
+describe('worker v1.1 (review fixes)', () => {
+  function msg(text: string, opts: { chatType?: string; fromId?: number; messageId?: number; updateId?: number; edited?: boolean } = {}) {
+    const message = { message_id: opts.messageId ?? 5, date: 1792680000, chat: { id: 1001, type: opts.chatType ?? 'private' }, from: { id: opts.fromId ?? 1001 }, text };
+    return { update_id: opts.updateId ?? 77, [opts.edited ? 'edited_message' : 'message']: message };
+  }
+  const keys = () => cellCalls().map((c) => (c.init.headers as Record<string, string>)['Idempotency-Key']);
+
+  it('AC-07b sends the full record bodies', async () => {
+    await worker.fetch(post(msg(FULL)), env, ctx);
+    const metric = JSON.parse(String(cellCalls()[0].init.body));
+    expect(metric.recorded_at).toBe('2026-10-22T21:40:00+07:00');
+    expect(JSON.parse(metric.metadata)).toEqual({ checkin_date: '2026-10-22' });
+    const exercise = cellCalls().map((c) => JSON.parse(String(c.init.body))).find((b) => b.metric_type === 'exercise_minutes');
+    expect(JSON.parse(exercise.metadata)).toEqual({ checkin_date: '2026-10-22', activity: 'วิ่ง' });
+    const time = JSON.parse(String(cellCalls().find((c) => c.url.startsWith('https://time.test'))!.init.body));
+    expect(time).toEqual({ log_date: '2026-10-22', domain: 'work', activity: 'CuteERP', minutes: 300, notes: 'telegram-checkin' });
+  });
+
+  it('AC-06b non-JSON body and an unset secret', async () => {
+    const bad = new Request('https://checkin.test/telegram', { method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 'hook-secret' }, body: 'not json' });
+    expect((await worker.fetch(bad, env, ctx)).status).toBe(400);
+    expect((await worker.fetch(post(msg(FULL), ''), { ...env, TELEGRAM_WEBHOOK_SECRET: '' }, ctx)).status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  it('AC-16 a failed Telegram send still answers 200, and long replies are cut', async () => {
+    respond = (url) => {
+      if (url.startsWith('https://api.telegram.org')) throw new Error('network down');
+      return new Response('{"id":1}', { status: 201, headers: { 'content-type': 'application/json' } });
+    };
+    expect((await worker.fetch(post(msg(FULL)), env, ctx)).status).toBe(200);
+    respond = () => new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+    calls = [];
+    const many = Array.from({ length: 300 }, (_, i) => `นอน ${30 + i}`).join('\n');
+    await worker.fetch(post(msg(many)), env, ctx);
+    expect(sentText(telegramCalls()[0]).length).toBeLessThanOrEqual(4000);
+  });
+
+  it('AC-18 idempotency keys come from the message and repeat on retry', async () => {
+    await worker.fetch(post(msg(FULL, { updateId: 77 })), env, ctx);
+    const first = keys();
+    calls = [];
+    await worker.fetch(post(msg(FULL, { updateId: 99 })), env, ctx);
+    expect(keys()).toEqual(first);
+    for (const k of first) expect(k).toMatch(/^checkin:1001:5:/);
+    calls = [];
+    await worker.fetch(post(msg(FULL, { messageId: 6 })), env, ctx);
+    for (const k of keys()) expect(first).not.toContain(k);
+  });
+
+  it('AC-19 only the owner in a private chat; edits get a hint', async () => {
+    await worker.fetch(post(msg(FULL, { chatType: 'group' })), env, ctx);
+    await worker.fetch(post(msg(FULL, { fromId: 4242 })), env, ctx);
+    expect(calls).toEqual([]);
+    await worker.fetch(post(msg(FULL, { edited: true })), env, ctx);
+    expect(cellCalls()).toEqual([]);
+    expect(sentText(telegramCalls()[0])).toContain('ข้อความใหม่');
   });
 });
