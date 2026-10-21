@@ -9,25 +9,35 @@ export interface Parsed { date: string; recordedAt: string; metrics: Metric[]; t
 const BANGKOK_OFFSET_MS = 7 * 3_600_000;
 // Replies sent before 05:00 belong to the evening before.
 const DAY_STARTS_AT_HOUR = 5;
+// Cell writes per message: keeps one webhook call under the Workers 50-subrequest limit.
+export const MAX_RECORDS = 40;
+const MAX_SLEEP_HOURS = 16;
 
 const NUM = '(\\d+(?:\\.\\d+)?)';
 const SEP = '\\s*[:：=]?\\s*';
-const HOURS = 'ชม\\.?|ชั่วโมง|h|hr|hrs|hours?';
-const MINUTES = 'นาที|min|mins|m';
+// Longest alternatives first, and a unit may not run into more letters ("1 hour" is not "1 h" + "our").
+const HOURS = 'ชั่วโมง|ชม\\.?|hours?|hrs?|h';
+const MINUTES = 'นาที|minutes?|mins?|m';
+const UNIT_END = '(?![a-z])';
+// A keyword must end at a space, a colon or the end of the line ("งานบ้าน" is not "งาน").
+const KW_END = '(?=[\\s:：=]|$)';
 
-const DIARY = /^(?:บันทึก|ไดอารี่|diary|note|โน้ต)\s*[:：]?\s*(.*)$/i;
+const DIARY = new RegExp(`^(?:บันทึก|ไดอารี่|diary|note|โน้ต)${KW_END}\\s*[:：]?\\s*(.*)$`, 'i');
 const WEIGHT = new RegExp(`^(?:น้ำหนัก|นน\\.?|weight)${SEP}${NUM}\\s*(?:kg|กก\\.?|กิโล(?:กรัม)?)?$`, 'i');
 const WATER = new RegExp(`^(?:น้ำ|ดื่มน้ำ|water)${SEP}${NUM}\\s*(ลิตร|l|ml|มล\\.?)?$`, 'i');
-const SLEEP = new RegExp(`^(?:นอน|หลับ|sleep)${SEP}(\\d+:\\d{2}|${NUM}\\s*(?:${HOURS})?)$`, 'i');
+const SLEEP = new RegExp(`^(?:นอน|หลับ|sleep)${SEP}(\\d+:\\d{2}|${NUM}\\s*(?:(?:${HOURS})${UNIT_END})?)$`, 'i');
 const MOOD = new RegExp(`^(?:อารมณ์|mood)${SEP}${NUM}\\s*(?:\\/\\s*5)?$`, 'i');
 const ENERGY = new RegExp(`^(?:พลังงาน|energy)${SEP}${NUM}\\s*(?:\\/\\s*5)?$`, 'i');
-const EXERCISE = new RegExp(`^(?:ออกกำลัง(?:กาย)?|exercise|workout)${SEP}${NUM}\\s*(${HOURS}|${MINUTES})?\\s*(.*)$`, 'i');
+const EXERCISE = new RegExp(`^(?:ออกกำลัง(?:กาย)?|exercise|workout)${SEP}${NUM}\\s*(?:(${HOURS}|${MINUTES})${UNIT_END})?\\s*(.*)$`, 'i');
 const ACTIVITY_FIRST = new RegExp(
-  `^(วิ่ง|เดิน|ยิม|ว่ายน้ำ|ปั่นจักรยาน|ปั่น|โยคะ|เวท|run|walk|gym|swim|bike|cycling|yoga|weights?)\\s*${NUM}\\s*(${HOURS}|${MINUTES})?$`,
+  `^(วิ่ง|เดิน|ยิม|ว่ายน้ำ|ปั่นจักรยาน|ปั่น|โยคะ|เวท|run|walk|gym|swim|bike|cycling|yoga|weights?)\\s*${NUM}\\s*(?:(${HOURS}|${MINUTES})${UNIT_END})?$`,
   'i',
 );
-const TIME = /^(งาน|ทำงาน|work|เรียน|learn(?:ing)?|study|ส่วนตัว|personal)\s*[:：]?\s*(.*)$/i;
-const DURATION = new RegExp(`^(.*?)\\s*(?:(\\d+):(\\d{2})|${NUM}\\s*(${HOURS}|${MINUTES})?)$`, 'i');
+const TIME = new RegExp(`^(งาน|ทำงาน|work|เรียน|learn(?:ing)?|study|ส่วนตัว|personal)${KW_END}\\s*[:：]?\\s*(.*)$`, 'i');
+const COMPOUND = new RegExp(`^(.*?)\\s*${NUM}\\s*(?:${HOURS})\\s*(\\d+)\\s*(?:${MINUTES})${UNIT_END}$`, 'i');
+const DURATION = new RegExp(`^(.*?)\\s*(?:(\\d+):(\\d{2})|${NUM}\\s*(?:(${HOURS}|${MINUTES})${UNIT_END})?)$`, 'i');
+// A label that still ends in a number + unit means the duration was written in a form we don't read.
+const TRAILING_DURATION = new RegExp(`\\d\\s*(?:${HOURS}|${MINUTES})$`, 'i');
 
 const DOMAINS: Record<string, TimeLog['domain']> = {
   งาน: 'work', ทำงาน: 'work', work: 'work',
@@ -70,17 +80,29 @@ function parseScore(raw: string): number | null {
   return Number.isInteger(value) && inRange(value, 1, 5) ? value : null;
 }
 
-/** Minutes in one work item such as "CuteERP 5", "admin 30 นาที", "1:30". */
-function parseWorkItem(item: string, keyword: string): TimeLog | null {
-  const m = DURATION.exec(item.trim());
-  if (!m) return null;
-  const [, label, hh, mm, num, unit] = m;
+/** One work item such as "CuteERP 5", "admin 30 นาที", "1:30", "1h30m".
+ * null: not a duration at all (the line is a sentence); 'invalid': a duration we can't accept. */
+function parseWorkItem(item: string, keyword: string): TimeLog | 'invalid' | null {
+  const text = item.trim();
+  let label: string;
   let minutes: number;
-  if (hh !== undefined) minutes = Number(hh) * 60 + Number(mm);
-  else if (isMinutes(unit)) minutes = Number(num);
-  else minutes = Number(num) * 60;
+  const compound = COMPOUND.exec(text);
+  const m = compound ? null : DURATION.exec(text);
+  if (compound) {
+    label = compound[1];
+    minutes = Number(compound[2]) * 60 + Number(compound[3]);
+  } else if (m) {
+    const [, l, hh, mm, num, unit] = m;
+    label = l;
+    if (hh !== undefined) {
+      if (Number(mm) >= 60) return 'invalid';
+      minutes = Number(hh) * 60 + Number(mm);
+    } else if (isMinutes(unit)) minutes = Number(num);
+    else minutes = Number(num) * 60;
+  } else return null;
+  if (TRAILING_DURATION.test(label.trim())) return 'invalid';
   minutes = Math.round(minutes);
-  if (!inRange(minutes, 1, 1440)) return null;
+  if (!inRange(minutes, 1, 1440)) return 'invalid';
   return { domain: DOMAINS[keyword.toLowerCase()], activity: label.trim() || keyword, minutes };
 }
 
@@ -114,8 +136,8 @@ export function parseCheckin(text: string, now: Date): Parsed {
     } else if ((m = SLEEP.exec(line))) {
       const [h, mm] = m[1].includes(':') ? m[1].split(':').map(Number) : [Number(m[2]), 0];
       const value = round(h + mm / 60);
-      if (inRange(value, 0, 24)) metrics.push({ type: 'sleep_hours', value, unit: 'h' });
-      else rejected.push({ line, reason: 'ชั่วโมงนอนต้องอยู่ระหว่าง 0–24' });
+      if (mm < 60 && inRange(value, 0, MAX_SLEEP_HOURS)) metrics.push({ type: 'sleep_hours', value, unit: 'h' });
+      else rejected.push({ line, reason: `ชั่วโมงนอนต้องอยู่ระหว่าง 0–${MAX_SLEEP_HOURS} (ไม่ใช่เวลาเข้านอน)` });
     } else if ((m = MOOD.exec(line))) {
       const score = parseScore(m[1]);
       if (score === null) rejected.push({ line, reason: 'อารมณ์ให้คะแนน 1–5' });
@@ -135,11 +157,11 @@ export function parseCheckin(text: string, now: Date): Parsed {
       const items = m[2].split(/[,;、]/).map((s) => s.trim()).filter(Boolean);
       const parsed = items.map((item) => parseWorkItem(item, keyword));
       if (items.length === 0 || parsed.every((p) => p === null)) {
-        diaryLines.push(line); // "งานวันนี้หนักมาก" is a sentence, not a time log
+        diaryLines.push(line); // "งาน วันนี้หนักมาก" is a sentence, not a time log
       } else {
         parsed.forEach((p, i) => {
-          if (p) timeLogs.push(p);
-          else rejected.push({ line: `${keyword} ${items[i]}`, reason: 'ระบุเวลาเป็นชั่วโมง (5, 1.5, 1:30) หรือนาที (45 นาที)' });
+          if (p && p !== 'invalid') timeLogs.push(p);
+          else rejected.push({ line: `${keyword} ${items[i]}`, reason: 'เวลาต้องอยู่ระหว่าง 1 นาที–24 ชม. เขียนเป็น 5, 1.5, 1:30, 1h30m หรือ 45 นาที' });
         });
       }
     } else {
@@ -147,5 +169,15 @@ export function parseCheckin(text: string, now: Date): Parsed {
     }
   }
 
-  return { date, recordedAt, metrics, timeLogs, diary: diaryLines.length ? diaryLines.join('\n') : null, mood, energy, rejected };
+  const diary = diaryLines.length ? diaryLines.join('\n') : null;
+  const journal = diary !== null || mood !== null || energy !== null ? 1 : 0;
+  let room = MAX_RECORDS - journal;
+  const keptMetrics = metrics.slice(0, Math.max(room, 0));
+  room -= keptMetrics.length;
+  const keptLogs = timeLogs.slice(0, Math.max(room, 0));
+  for (const dropped of [...metrics.slice(keptMetrics.length), ...timeLogs.slice(keptLogs.length)]) {
+    const label = 'type' in dropped ? `${dropped.type} ${dropped.value}` : `${dropped.activity} ${dropped.minutes} นาที`;
+    rejected.push({ line: label, reason: `เกิน ${MAX_RECORDS} รายการต่อข้อความ ส่งที่เหลือเป็นข้อความใหม่` });
+  }
+  return { date, recordedAt, metrics: keptMetrics, timeLogs: keptLogs, diary, mood, energy, rejected };
 }

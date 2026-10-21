@@ -16,12 +16,15 @@ export interface Env {
 
 const SERVICE = 'solo-empire-checkin';
 const SOURCE = 'telegram-checkin';
-const REQUEST_TIMEOUT_MS = 8_000;
+// Cell writes run in parallel, then one Telegram call: 2 × 5 s keeps the webhook near 10 s.
+const REQUEST_TIMEOUT_MS = 5_000;
+const TELEGRAM_TEXT_LIMIT = 4000; // Telegram's hard limit is 4096
+const BOT_USERNAME = 'book_noti_bot';
 const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const THAI_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'];
 
-interface TelegramMessage { date: number; text?: string; chat: { id: number } }
-interface TelegramUpdate { update_id: number; message?: TelegramMessage }
+interface TelegramMessage { message_id: number; date: number; text?: string; chat: { id: number; type?: string }; from?: { id: number } }
+interface TelegramUpdate { update_id: number; message?: TelegramMessage; edited_message?: TelegramMessage }
 interface WriteResult { label: string; ok: boolean; status?: number }
 
 const json = (body: unknown, status = 200) =>
@@ -91,13 +94,21 @@ const HELP = [
   '/checkin ส่งคำถามเช็คอินอีกรอบ',
 ].join('\n');
 
+/** Never throws: after the secret check the webhook must answer 200, or Telegram retries. */
 async function sendMessage(env: Env, text: string): Promise<void> {
-  await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, disable_web_page_preview: true }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  const body = text.length > TELEGRAM_TEXT_LIMIT ? `${text.slice(0, TELEGRAM_TEXT_LIMIT - 1)}…` : text;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text: body, disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    await res.body?.cancel();
+    if (!res.ok) console.log(JSON.stringify({ event: 'telegram_send_failed', status: res.status }));
+  } catch {
+    console.log(JSON.stringify({ event: 'telegram_send_failed', status: 0 }));
+  }
 }
 
 async function postCell(env: Env, url: string, body: unknown, key: string, label: string): Promise<WriteResult> {
@@ -122,8 +133,10 @@ async function postCell(env: Env, url: string, body: unknown, key: string, label
   }
 }
 
-async function writeCheckin(env: Env, p: Parsed, updateId: number): Promise<WriteResult[]> {
-  const key = (kind: string, i: number) => `checkin:${updateId}:${kind}:${i}`;
+async function writeCheckin(env: Env, p: Parsed, message: TelegramMessage): Promise<WriteResult[]> {
+  // From the message, not update_id: Telegram reuses update ids after a quiet week, and a reused key
+  // would replay an old record instead of storing the new one.
+  const key = (kind: string, i: number) => `checkin:${message.chat.id}:${message.message_id}:${kind}:${i}`;
   const writes: Promise<WriteResult>[] = [];
   p.metrics.forEach((m, i) => writes.push(postCell(env, `${env.HEALTH_ORIGIN}/v1/health-metrics`, {
     source: SOURCE,
@@ -177,13 +190,20 @@ async function handleTelegram(request: Request, env: Env): Promise<Response> {
   let update: TelegramUpdate;
   try { update = await request.json(); } catch { return json({ ok: false }, 400); }
 
+  const fromOwner = (m: TelegramMessage | undefined): m is TelegramMessage =>
+    !!m && m.chat?.type === 'private' && String(m.chat.id) === env.TELEGRAM_CHAT_ID && String(m.from?.id) === env.TELEGRAM_CHAT_ID;
+  if (fromOwner(update.edited_message)) {
+    await sendMessage(env, 'แก้ข้อความเดิมแล้วระบบไม่บันทึกซ้ำให้ ส่งค่าที่ถูกต้องเป็นข้อความใหม่ได้เลย');
+    return json({ ok: true });
+  }
   const message = update.message;
-  if (!message || String(message.chat?.id) !== env.TELEGRAM_CHAT_ID) return json({ ok: true });
+  if (!fromOwner(message)) return json({ ok: true });
   const text = message.text?.trim();
   if (!text) return json({ ok: true });
 
   if (text.startsWith('/')) {
-    const command = text.split(/\s+/)[0].split('@')[0].toLowerCase();
+    const [command, mention] = text.split(/\s+/)[0].toLowerCase().split('@');
+    if (mention && mention !== BOT_USERNAME) return json({ ok: true });
     if (command === '/checkin') await sendMessage(env, promptText(parseCheckin('', new Date(message.date * 1000)).date));
     else await sendMessage(env, HELP);
     return json({ ok: true });
@@ -195,7 +215,7 @@ async function handleTelegram(request: Request, env: Env): Promise<Response> {
     await sendMessage(env, HELP);
     return json({ ok: true });
   }
-  const results = await writeCheckin(env, parsed, update.update_id);
+  const results = await writeCheckin(env, parsed, message);
   // Always 200 after the secret check: a Telegram retry would only repeat what the reply already reports.
   await sendMessage(env, summary(parsed, results));
   console.log(JSON.stringify({ event: 'checkin', written: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).map((r) => r.status ?? 0), rejected: parsed.rejected.length }));

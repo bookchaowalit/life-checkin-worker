@@ -14,7 +14,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 | Field | Value |
 |---|---|
-| Spec ID / version | SPEC-001 / 1.0 |
+| Spec ID / version | SPEC-001 / 1.1 |
 | Status | **implemented** |
 | Repository / path | bookchaowalit/life-checkin-worker / `specs/001-evening-checkin/spec.md` |
 | Owner (maker) | Claude Code |
@@ -137,6 +137,60 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 - **And** any other path returns 404
 - **Test:** `test/worker.test.ts > "AC-11 health endpoint"` · level: integration
 
+### AC-12 — Keywords need a word boundary (v1.1, review R-01 #1)
+
+- **Given** `งานบ้าน 1`, `งานเลี้ยง 3`, `noted ok`, `notebook ใหม่`
+- **Then** no time log is created and all four lines stay in the diary unchanged
+- **Test:** `test/parse.test.ts > "AC-12 keywords need a word boundary"` · level: unit
+
+### AC-13 — Unit words don't bleed into the activity (v1.1, R-01 #2)
+
+- **Given** `ออกกำลัง 1 hour วิ่ง`, `ออกกำลัง 45 mins วิ่ง`, `ออกกำลัง 30 minutes`, `ออกกำลัง 1 hr`, `gym 2 hours`
+- **Then** they give 60 min (วิ่ง), 45 min (วิ่ง), 30 min, 60 min and 120 min (gym)
+- **Test:** `test/parse.test.ts > "AC-13 long unit words do not bleed into the activity"` · level: unit
+
+### AC-14 — Compound durations (v1.1, R-01 #3)
+
+- **Given** `งาน 1h30m`, `งาน Cute 3 ชม. 30 นาที`, `work: api 2 hours`
+- **Then** they give 90, 210 and 120 minutes, with nothing rejected
+- **Test:** `test/parse.test.ts > "AC-14 compound durations"` · level: unit
+
+### AC-15 — Clock times and ranges are validated, never silently dropped (v1.1, R-01 #4, #5)
+
+- **Given** `นอน 23:30`, `นอน 7:75`, `งาน 1:75`, `งาน 25`, `งาน 0:00`, `นอน 7:30`
+- **Then** only sleep 7.5 h is stored. Sleep is capped at 16 h, so a bedtime is rejected, and minutes must be under 60
+- **And** the other five lines are each in `rejected`, and none of them goes to the diary
+- **Test:** `test/parse.test.ts > "AC-15 clock times and ranges are validated, never silently dropped"` · level: unit
+
+### AC-16 — A failed Telegram send still answers 200; long replies are cut (v1.1, R-01 #6)
+
+- **Given** the Telegram API throws, or the summary is longer than 4,000 characters
+- **Then** the webhook still returns 200, and the sent text is at most 4,000 characters
+- **Test:** `test/worker.test.ts > "AC-16 a failed Telegram send still answers 200, and long replies are cut"` · level: integration
+
+### AC-17 — At most 40 records per message (v1.1, R-01 #7)
+
+- **Given** a message with 1 metric, 60 work items and a diary line
+- **Then** 40 records are kept in total, and the other 22 are in `rejected` with a "send the rest as a new message" reason
+- **Test:** `test/parse.test.ts > "AC-17 caps the records per message"` · level: unit
+
+### AC-18 — Idempotency keys come from the message (v1.1, R-01 #8, #9)
+
+- **Given** the same message delivered twice (with the same or a different `update_id`)
+- **Then** the cell requests carry the same keys, `checkin:<chat.id>:<message_id>:<kind>:<i>`
+- **And** a different `message_id` gives different keys
+- **Test:** `test/worker.test.ts > "AC-18 idempotency keys come from the message and repeat on retry"` · level: integration
+
+### AC-19 — Only the owner in a private chat; edits get a hint (v1.1, R-01 nits)
+
+- **Given** the owner's chat id in a group, or a message whose `from.id` isn't the owner
+- **Then** nothing is written or sent
+- **And** when the owner edits a message (`edited_message`), nothing is written and the bot asks for a new message
+- **And** `/checkin@otherbot` is ignored
+- **Test:** `test/worker.test.ts > "AC-19 only the owner in a private chat; edits get a hint"`, `"AC-10 ignores non-text and answers help"` · level: integration
+
+AC-02, AC-06, AC-07, AC-08, AC-09 and AC-10 gained further assertions in v1.1: English mood, energy and exercise lines; a non-JSON body gets 400; an unset secret gets 401; the full record bodies; the failed item is named in the reply; `/checkin` sends the prompt rather than help; `/help` works.
+
 ## 4. Interfaces and data
 
 | Interface | Change | Contract |
@@ -155,7 +209,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 | NFR | Target | How it is tested |
 |---|---|---|
-| Performance | A webhook reply within 10 s. 7 cell writes plus 1 Telegram call stay under the 50-subrequest free-plan limit | AC-07 counts the fetch calls |
+| Performance | Webhook reply within about 10 s (parallel cell writes at 5 s, plus Telegram at 5 s). At most 40 records + 1 Telegram call, under the 50-subrequest free-plan limit | AC-07, AC-17 |
 | Security / privacy | Secret-header check (constant-time compare). Chat allowlist. The token has only the read/write scopes for health-metric, time-log and journal-entry. No values are logged; only counts and HTTP statuses | AC-06, AC-11; reviewer check of the scopes in platform-empire |
 | Reliability / observability | Always 200 after the secret check, so Telegram doesn't retry. Idempotency keys stop duplicates if it does retry. `/health` is added to the uptime monitor | AC-07, AC-08; uptime target |
 | Accessibility / UX | Replies are plain Thai text that is readable on a phone | Manual check of the first live reply |
@@ -164,7 +218,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 - **Test levels:** unit tests for the parser; integration tests for the Worker with `fetch` mocked; one live end-to-end run after deploy (the owner replies to the first prompt).
 - **Test data:** Synthetic text only. No real records in the tests.
-- **Coverage:** CI gate `coverage-threshold: "94"` in `.github/workflows/ci.yml` (94.21% lines at green); never lower it.
+- **Coverage:** CI gate `coverage-threshold: "96"` in `.github/workflows/ci.yml`. It was 94 at v1.0 (94.21%) and was ratcheted to 96 at v1.1 (96.2%); never lower it.
 - **Not test-first (exceptions):** `wrangler.toml` and the CI workflow are pure config, checked by `wrangler deploy --dry-run` and the first CI run.
 
 ### Red / green log
@@ -172,6 +226,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 | Scenario | Test | Red: commit / run + failure message | Green: commit / run | Refactor note |
 |---|---|---|---|---|
 | AC-01..AC-05 | `test/parse.test.ts` | `4e84b3c` · `npx vitest run` · `AssertionError: expected '' to be '2026-10-22'` (stub parser) | green commit below; CI run of the pushed tip | none |
+| AC-12..AC-19 + extra v1.1 assertions | `test/parse.test.ts`, `test/worker.test.ts` | `21e0516` · `npx vitest run` · 10 failing, e.g. AC-12 `expected [ { domain: 'work', activity: 'บ้าน' … } ] to deeply equal []`, AC-18 `expected 'checkin:77:metric:0' to match /^checkin:1001:5:/` | v1.1 green commit; CI run of the pushed tip | sendMessage made non-throwing; record cap moved into parse |
 | AC-06..AC-11 | `test/worker.test.ts` | `4e84b3c` · `npx vitest run` · `AssertionError: expected 501 to be 401` (stub worker) | green commit below; CI run of the pushed tip | none |
 
 ## 7. Risks and open questions
@@ -187,3 +242,4 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-10-21 | First approved version |
+| 1.1 | 2026-10-21 | Independent review R-01 (fresh Claude reviewer): 0 blocking, 9 should-fix, all fixed via AC-12..AC-19. Coverage ratcheted from 94 to 96 |
