@@ -1,0 +1,19 @@
+name = "solo-empire-checkin"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+account_id = "98e152b05e32b75612ee03e955913ee2"
+
+# Public at https://solo-empire-checkin.bookchaowalit.workers.dev
+# POST /telegram is the book_noti_bot webhook (secret header); GET /health is for the uptime monitor.
+workers_dev = true
+
+# 21:30 Asia/Bangkok = 14:30 UTC: the evening check-in prompt.
+[triggers]
+crons = ["30 14 * * *"]
+
+# Cell origins (solo-empire cells on Railway). Secrets are set with `wrangler secret put`:
+# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, EMPIRE_CHECKIN_TOKEN (rotated by platform-empire).
+[vars]
+HEALTH_ORIGIN = "https://health-api-production-c72f.up.railway.app"
+TIME_ORIGIN = "https://time-api-production-2050.up.railway.app"
+DIARY_ORIGIN = "https://diary-api-production-2db8.up.railway.app"
