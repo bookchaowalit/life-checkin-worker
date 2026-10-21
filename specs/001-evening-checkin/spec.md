@@ -15,7 +15,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 | Field | Value |
 |---|---|
 | Spec ID / version | SPEC-001 / 1.0 |
-| Status | **approved** |
+| Status | **implemented** |
 | Repository / path | bookchaowalit/life-checkin-worker / `specs/001-evening-checkin/spec.md` |
 | Owner (maker) | Claude Code |
 | Reviewer (checker) | A fresh Claude reviewer subagent with no maker context |
@@ -164,15 +164,15 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 - **Test levels:** unit tests for the parser; integration tests for the Worker with `fetch` mocked; one live end-to-end run after deploy (the owner replies to the first prompt).
 - **Test data:** Synthetic text only. No real records in the tests.
-- **Coverage:** CI gate `coverage-threshold` is set to measured line coverage rounded down after the green run.
+- **Coverage:** CI gate `coverage-threshold: "94"` in `.github/workflows/ci.yml` (94.21% lines at green); never lower it.
 - **Not test-first (exceptions):** `wrangler.toml` and the CI workflow are pure config, checked by `wrangler deploy --dry-run` and the first CI run.
 
 ### Red / green log
 
 | Scenario | Test | Red: commit / run + failure message | Green: commit / run | Refactor note |
 |---|---|---|---|---|
-| AC-01..AC-05 | `test/parse.test.ts` | filled in at red run | filled in at green run | |
-| AC-06..AC-11 | `test/worker.test.ts` | filled in at red run | filled in at green run | |
+| AC-01..AC-05 | `test/parse.test.ts` | `4e84b3c` · `npx vitest run` · `AssertionError: expected '' to be '2026-10-22'` (stub parser) | green commit below; CI run of the pushed tip | none |
+| AC-06..AC-11 | `test/worker.test.ts` | `4e84b3c` · `npx vitest run` · `AssertionError: expected 501 to be 401` (stub worker) | green commit below; CI run of the pushed tip | none |
 
 ## 7. Risks and open questions
 
