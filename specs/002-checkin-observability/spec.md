@@ -3,7 +3,7 @@ title: SPEC-002 — Check-in observability (daily heartbeat, webhook check, vers
 tags: [spec, sdd, tdd, telegram, observability, heartbeat]
 created: 2026-10-22
 updated: 2026-10-22
-status: draft
+status: approved
 ---
 
 # SPEC-002 — Check-in observability
@@ -14,8 +14,8 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 | Field | Value |
 |---|---|
-| Spec ID / version | SPEC-002 / 0.3 |
-| Status | **draft: not approved, no code written** |
+| Spec ID / version | SPEC-002 / 1.0 |
+| Status | **approved** by the owner 2026-10-22, before any code; implementation in progress |
 | Repository / path | bookchaowalit/life-checkin-worker / `specs/002-checkin-observability/spec.md` |
 | Owner (maker) | Claude Code |
 | Reviewer (checker) | A fresh Claude reviewer subagent with no maker context. v0.1: changes requested (3 blocking, 8 non-blocking); v0.2: changes requested (2 blocking, 2 non-blocking); all addressed in v0.3 |
@@ -23,7 +23,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 | Requirement links | PRJ-LIFE-01 tech-debt TD-005, TD-006; observability gaps OBS-GAP-02..05 (`07b-observability.md`); failure modes FM-03, FM-04, FM-09 (`07c-failure-modes.md`) in architecture-docs `operations/life/evening-checkin/` |
 | Related repositories | platform-uptime-worker (one new heartbeat job, AC-25) |
 | Main-only | yes (ADR-0004 rule 2, v1.1): red and green commits on `main`, red run local, checker rerun **before** the push, one push per repository |
-| Created / approved | 2026-10-22 / — |
+| Created / approved | 2026-10-22 / 2026-10-22 |
 
 ## 1. Problem and intent
 
@@ -176,6 +176,7 @@ Common definitions:
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 2026-10-22 | Draft for review |
+| 1.0 | 2026-10-22 | Approved by the owner with D-1..D-4 as proposed; no content change from 0.3 |
 | 0.3 | 2026-10-22 | Review v0.2 (2 blocking, 2 non-blocking): deploy order and monitor behaviour for unknown or never-reported jobs corrected (F1); the chat notice no longer claims nothing was stored (F2); exception injection through `vi.mock` and the `prompt-not-sent` + `exception` result (F3); AC-29 removal rule and invocation-log note (F4) |
 | 0.2 | 2026-10-22 | Review v0.1 (3 blocking, 8 non-blocking): default `allowed_updates` is not a failure (B2); exception paths, `where` boundaries, injection points and content checks defined (B3); log persistence and owner chat notice as decision D-1, "closes" claims corrected (B1); seconds vs milliseconds, fixed reason order, backlog reason, `sendMessage` boolean, log helper, sentinel tests, deploy order, rotation step, no-retry by design, detection-time split, D-2..D-4 |
 
@@ -184,4 +185,4 @@ Common definitions:
 | Role | Name / date | Decision |
 |---|---|---|
 | Reviewer (AI checker) | fresh Claude reviewer, 2026-10-22 | v0.1 and v0.2 changes requested; the reviewer stated v0.3 needs no third round if F1 and F2 are fixed as proposed, which they are |
-| Owner | — | **pending**: approve the spec and answer D-1..D-4 before any code |
+| Owner | Owner (bookchaowalit) / 2026-10-22 | **Approved** v0.3 as written, with D-1 = (a) turn on Workers Logs, D-2 = (a) accept the shared heartbeat token, D-3 = 10, D-4 = (a). Owner's words: "อนุมัติ SPEC-002 v0.3 พร้อม D-1=(a) เปิด Workers Logs, D-2=(a) ยอมรับ token เดียว, D-3=10, D-4=(a) แล้วลงมือ build ได้" |
