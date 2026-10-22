@@ -90,6 +90,10 @@ describe('SPEC-002 daily heartbeat', () => {
     ['recent error', () => { webhookInfo = info({ last_error_date: (RUN - 3_600_000) / 1000, last_error_message: 'SENTINEL-MSG' }); }, ['webhook-recent-error']],
     ['backlog of 10', () => { webhookInfo = info({ pending_update_count: 10 }); }, ['webhook-pending-backlog']],
     ['prompt and url together', () => { sendStatus = 500; webhookInfo = info({ url: 'https://evil.example/x' }); }, ['prompt-not-sent', 'webhook-url-mismatch']],
+    ['every webhook reason at once, in the fixed order', () => {
+      sendStatus = 500;
+      webhookInfo = info({ url: 'https://evil.example/x', allowed_updates: ['message'], last_error_date: (RUN - 60_000) / 1000, pending_update_count: 50 });
+    }, ['prompt-not-sent', 'webhook-url-mismatch', 'webhook-updates-missing', 'webhook-recent-error', 'webhook-pending-backlog']],
   ])('AC-24 the daily run reports each failure reason and nothing else: %s', async (_name, setup, failed) => {
     setup();
     await run();
@@ -119,6 +123,7 @@ describe('SPEC-002 reporting never breaks the check-in', () => {
   it.each([
     ['monitor answers 500', () => { monitor = () => new Response('x', { status: 500 }); }, 500],
     ['monitor unreachable', () => { monitor = () => { throw new TypeError('network'); }; }, 0],
+    ['monitor times out', () => { monitor = () => { throw new DOMException('timed out', 'TimeoutError'); }; }, 0],
   ])('AC-26 heartbeat or webhook-info failures never break the run: %s', async (_name, setup, status) => {
     setup();
     await expect(run()).resolves.toBeUndefined();
@@ -128,6 +133,7 @@ describe('SPEC-002 reporting never breaks the check-in', () => {
     expect(line).toMatchObject({ event: 'heartbeat_failed', status });
     noSecretsIn(logs);
     expect(logs.join('\n')).not.toContain(MONITOR);
+    expect(logs.join('\n')).not.toContain('workers.dev');
   });
 
   it('AC-26 without HEARTBEAT_TOKEN or MONITOR_ORIGIN it still prompts and logs status -1', async () => {
@@ -137,9 +143,11 @@ describe('SPEC-002 reporting never breaks the check-in', () => {
       expect(calls.filter((c) => c.url.endsWith('/sendMessage'))).toHaveLength(1);
       expect(calls.filter((c) => c.url.startsWith(MONITOR))).toEqual([]);
       expect(logs.map((l) => JSON.parse(l)).find((l) => l.event === 'heartbeat_failed')).toMatchObject({ status: -1 });
+      noSecretsIn(logs);
     }
   });
 
+  // A deliberate guard that is already green before SPEC-002: the new calls must never reach POST /telegram.
   it('AC-26 the webhook path makes no getWebhookInfo or heartbeat call', async () => {
     const body = { update_id: 1, message: { message_id: 5, date: 1792680000, chat: { id: 1001, type: 'private' }, from: { id: 1001 }, text: 'นอน 7' } };
     const req = new Request('https://checkin.test/telegram', {

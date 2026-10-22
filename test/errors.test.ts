@@ -67,15 +67,30 @@ describe('SPEC-002 exceptions', () => {
     expect(res.status).toBe(200);
     expect(errorLines()).toEqual([{ event: 'error', where: 'telegram', name: 'Error', version: 'v-123' }]);
     expect(logs.join('\n')).not.toContain('SENTINEL');
-    expect(sent()).toHaveLength(1);
-    expect(sent()[0]).toContain('บางรายการอาจบันทึกแล้ว');
+    expect(sent()).toEqual(['⚠️ ระบบขัดข้องระหว่างประมวลผลข้อความนี้ บางรายการอาจบันทึกแล้ว ตรวจสรุปพรุ่งนี้เช้าก่อนส่งซ้ำ']);
     expect(sent()[0]).not.toContain('ยังไม่ได้บันทึก');
+    expect(sent()[0]).not.toContain('SENTINEL');
   });
 
   it('AC-28 a thrown non-Error is named "unknown"', async () => {
     fault.value = 'SENTINEL string';
     expect((await worker.fetch(reply('นอน 7'), env, ctx)).status).toBe(200);
     expect(errorLines()).toEqual([{ event: 'error', where: 'telegram', name: 'unknown', version: 'v-123' }]);
+    expect(logs.join('\n')).not.toContain('SENTINEL');
+    expect(sent()).toHaveLength(1);
+  });
+
+  it('AC-28 an exception on another route answers 500 with where "fetch"', async () => {
+    const broken = {
+      get url(): string { throw new Error('SENTINEL url'); },
+      method: 'GET',
+      headers: new Headers(),
+    } as unknown as Request;
+    const res = await worker.fetch(broken, env, ctx);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false });
+    expect(errorLines()).toEqual([{ event: 'error', where: 'fetch', name: 'Error', version: 'v-123' }]);
+    expect(calls).toEqual([]);
     expect(logs.join('\n')).not.toContain('SENTINEL');
   });
 
