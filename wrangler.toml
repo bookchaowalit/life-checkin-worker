@@ -17,3 +17,14 @@ crons = ["30 14 * * *"]
 HEALTH_ORIGIN = "https://health-api-production-c72f.up.railway.app"
 TIME_ORIGIN = "https://time-api-production-2050.up.railway.app"
 DIARY_ORIGIN = "https://diary-api-production-2db8.up.railway.app"
+# SPEC-002: the cron checks the webhook registration against PUBLIC_ORIGIN and reports to the monitor.
+# HEARTBEAT_TOKEN is a secret (Infisical /monitoring), set with `wrangler secret put`.
+PUBLIC_ORIGIN = "https://solo-empire-checkin.bookchaowalit.workers.dev"
+MONITOR_ORIGIN = "https://solo-empire-monitor.bookchaowalit.workers.dev"
+
+# SPEC-002: every log line names the deployed version, and Workers Logs keep the lines (D-1 = a).
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[observability]
+enabled = true

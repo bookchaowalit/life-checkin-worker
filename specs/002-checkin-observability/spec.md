@@ -15,7 +15,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 | Field | Value |
 |---|---|
 | Spec ID / version | SPEC-002 / 1.0 |
-| Status | **approved** by the owner 2026-10-22, before any code; implementation in progress |
+| Status | **approved** by the owner 2026-10-22, before any code; implemented (Worker), monitor AC-25 and deploy pending |
 | Repository / path | bookchaowalit/life-checkin-worker / `specs/002-checkin-observability/spec.md` |
 | Owner (maker) | Claude Code |
 | Reviewer (checker) | A fresh Claude reviewer subagent with no maker context. v0.1: changes requested (3 blocking, 8 non-blocking); v0.2: changes requested (2 blocking, 2 non-blocking); all addressed in v0.3 |
@@ -155,7 +155,7 @@ Common definitions:
 
 | Scenario | Test | Red: commit · command · failure message | Green: commit · CI run | Refactor note |
 |---|---|---|---|---|
-| AC-23..AC-29 | `test/worker.test.ts` | — | — | — |
+| AC-23..AC-29 | `test/observability.test.ts`, `test/errors.test.ts` | `ca815c4` · `npx vitest run` · 28 failed, e.g. AC-23 `expected [ 'sendMessage' ] to deeply equal [ 'sendMessage', …(2) ]`, AC-28 `promise rejected "Error: SENTINEL in cron" instead of resolving`; checker rerun before the push: valid red, 0 blocking. `49a2f1a` (checker notes): 3 more failing cases, 31 failed at the red code | green commit below; CI run of the pushed tip | AC-09 (SPEC-001) now counts `sendMessage` calls only (`0a32c32`, passes before and after); the webhook-path test is an already-green guard |
 | AC-25 | platform-uptime-worker `test/monitor.test.ts` | — | — | — |
 
 ## 7. Decisions for the owner, risks and open questions

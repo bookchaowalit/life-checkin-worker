@@ -12,7 +12,7 @@ export interface Env {
   HEALTH_ORIGIN: string;
   TIME_ORIGIN: string;
   DIARY_ORIGIN: string;
-  // SPEC-002 (red stub: declared, not used yet)
+  // SPEC-002: daily heartbeat and webhook check (vars + secret), version metadata binding
   PUBLIC_ORIGIN?: string;
   MONITOR_ORIGIN?: string;
   HEARTBEAT_TOKEN?: string;
@@ -27,12 +27,30 @@ const CELL_TIMEOUT_MS = 12_000;
 const TELEGRAM_TIMEOUT_MS = 5_000;
 const TELEGRAM_TEXT_LIMIT = 4000; // Telegram's hard limit is 4096
 const BOT_USERNAME = 'book_noti_bot';
+// SPEC-002: the cron reports one heartbeat after checking the webhook registration.
+const MONITOR_TIMEOUT_MS = 5_000;
+const HEARTBEAT_JOB = 'checkin-daily';
+const RECENT_ERROR_MS = 24 * 3_600_000;
+const PENDING_BACKLOG = 10; // D-3
+// Reason codes in the order they are reported; nothing else ever reaches the monitor or Telegram.
+const REASONS = ['prompt-not-sent', 'webhook-info-unavailable', 'webhook-url-mismatch', 'webhook-updates-missing',
+  'webhook-recent-error', 'webhook-pending-backlog', 'exception'] as const;
+type Reason = (typeof REASONS)[number];
+const ERROR_NOTICE = '⚠️ ระบบขัดข้องระหว่างประมวลผลข้อความนี้ บางรายการอาจบันทึกแล้ว ตรวจสรุปพรุ่งนี้เช้าก่อนส่งซ้ำ';
 const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const THAI_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'];
 
 interface TelegramMessage { message_id: number; date: number; text?: string; chat: { id: number; type?: string }; from?: { id: number } }
 interface TelegramUpdate { update_id: number; message?: TelegramMessage; edited_message?: TelegramMessage }
 interface WriteResult { label: string; ok: boolean; status?: number }
+
+/** Every log line goes through here so it names the deployed version (SPEC-002 AC-27). */
+function log(env: Env, event: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ event, ...fields, version: env.CF_VERSION_METADATA?.id ?? 'unknown' }));
+}
+
+/** The error's name only: messages and stacks may carry user text (SPEC-002 AC-28). */
+const errorName = (error: unknown) => (error instanceof Error ? error.name : 'unknown');
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -101,8 +119,8 @@ const HELP = [
   '/checkin ส่งคำถามเช็คอินอีกรอบ',
 ].join('\n');
 
-/** Never throws: after the secret check the webhook must answer 200, or Telegram retries. */
-async function sendMessage(env: Env, text: string): Promise<void> {
+/** Never throws: after the secret check the webhook must answer 200, or Telegram retries. True when Telegram accepted it. */
+async function sendMessage(env: Env, text: string): Promise<boolean> {
   const body = text.length > TELEGRAM_TEXT_LIMIT ? `${text.slice(0, TELEGRAM_TEXT_LIMIT - 1)}…` : text;
   try {
     const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
@@ -112,9 +130,11 @@ async function sendMessage(env: Env, text: string): Promise<void> {
       signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS),
     });
     await res.body?.cancel();
-    if (!res.ok) console.log(JSON.stringify({ event: 'telegram_send_failed', status: res.status }));
+    if (!res.ok) log(env, 'telegram_send_failed', { status: res.status });
+    return res.ok;
   } catch {
-    console.log(JSON.stringify({ event: 'telegram_send_failed', status: 0 }));
+    log(env, 'telegram_send_failed', { status: 0 });
+    return false;
   }
 }
 
@@ -190,9 +210,10 @@ function summary(p: Parsed, results: WriteResult[]): string {
   return lines.join('\n');
 }
 
-async function handleTelegram(request: Request, env: Env): Promise<Response> {
+async function handleTelegram(request: Request, env: Env, authorised: () => void): Promise<Response> {
   const secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token') ?? '';
   if (!env.TELEGRAM_WEBHOOK_SECRET || !safeEqual(secret, env.TELEGRAM_WEBHOOK_SECRET)) return json({ ok: false }, 401);
+  authorised();
 
   let update: TelegramUpdate;
   try { update = await request.json(); } catch { return json({ ok: false }, 400); }
@@ -225,19 +246,90 @@ async function handleTelegram(request: Request, env: Env): Promise<Response> {
   const results = await writeCheckin(env, parsed, message);
   // Always 200 after the secret check: a Telegram retry would only repeat what the reply already reports.
   await sendMessage(env, summary(parsed, results));
-  console.log(JSON.stringify({ event: 'checkin', written: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).map((r) => r.status ?? 0), rejected: parsed.rejected.length }));
+  log(env, 'checkin', { written: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).map((r) => r.status ?? 0), rejected: parsed.rejected.length });
   return json({ ok: true });
+}
+
+interface WebhookInfo { url?: string; allowed_updates?: string[]; last_error_date?: number; pending_update_count?: number }
+
+/** Compare the live webhook registration with what this Worker expects. Reads no field into a log. */
+async function checkWebhook(env: Env, runMs: number): Promise<Reason[]> {
+  let info: WebhookInfo;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`, {
+      signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      await res.body?.cancel();
+      return ['webhook-info-unavailable'];
+    }
+    const body = (await res.json()) as { ok?: boolean; result?: WebhookInfo };
+    if (!body.ok || !body.result) return ['webhook-info-unavailable'];
+    info = body.result;
+  } catch {
+    return ['webhook-info-unavailable'];
+  }
+  const reasons: Reason[] = [];
+  if (!info.url || info.url !== `${env.PUBLIC_ORIGIN}/telegram`) reasons.push('webhook-url-mismatch');
+  // Absent or empty allowed_updates is Telegram's default, which includes both types.
+  const updates = info.allowed_updates;
+  if (updates?.length && !(updates.includes('message') && updates.includes('edited_message'))) reasons.push('webhook-updates-missing');
+  // last_error_date is Unix time in seconds.
+  if (typeof info.last_error_date === 'number' && runMs - info.last_error_date * 1000 < RECENT_ERROR_MS) reasons.push('webhook-recent-error');
+  if (typeof info.pending_update_count === 'number' && info.pending_update_count >= PENDING_BACKLOG) reasons.push('webhook-pending-backlog');
+  return reasons;
+}
+
+/** One attempt, never throws (SPEC-002 AC-26). The body holds only reason codes. */
+async function reportHeartbeat(env: Env, reasons: Set<Reason>): Promise<void> {
+  if (!env.HEARTBEAT_TOKEN || !env.MONITOR_ORIGIN) {
+    log(env, 'heartbeat_failed', { status: -1 });
+    return;
+  }
+  const failed = REASONS.filter((r) => reasons.has(r));
+  try {
+    const res = await fetch(`${env.MONITOR_ORIGIN}/heartbeat/${HEARTBEAT_JOB}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.HEARTBEAT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ok: failed.length === 0, failed }),
+      signal: AbortSignal.timeout(MONITOR_TIMEOUT_MS),
+    });
+    await res.body?.cancel();
+    if (!res.ok) log(env, 'heartbeat_failed', { status: res.status });
+  } catch {
+    log(env, 'heartbeat_failed', { status: 0 });
+  }
 }
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
-    const { pathname } = new URL(request.url);
-    if (pathname === '/health' && request.method === 'GET') return json({ ok: true, service: SERVICE });
-    if (pathname === '/telegram' && request.method === 'POST') return handleTelegram(request, env);
-    return json({ ok: false }, 404);
+    let authorised = false;
+    try {
+      const { pathname } = new URL(request.url);
+      if (pathname === '/health' && request.method === 'GET') return json({ ok: true, service: SERVICE });
+      if (pathname === '/telegram' && request.method === 'POST') return await handleTelegram(request, env, () => { authorised = true; });
+      return json({ ok: false }, 404);
+    } catch (error) {
+      log(env, 'error', { where: authorised ? 'telegram' : 'fetch', name: errorName(error) });
+      // After the secret check Telegram must get 200 (AD-06); the owner learns about it in the chat.
+      if (!authorised) return json({ ok: false }, 500);
+      await sendMessage(env, ERROR_NOTICE);
+      return json({ ok: true });
+    }
   },
 
   async scheduled(event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    await sendMessage(env, promptText(parseCheckin('', new Date(event.scheduledTime)).date));
+    const reasons = new Set<Reason>();
+    let promptSent = false;
+    try {
+      promptSent = await sendMessage(env, promptText(parseCheckin('', new Date(event.scheduledTime)).date));
+      if (!promptSent) reasons.add('prompt-not-sent');
+      for (const reason of await checkWebhook(env, event.scheduledTime)) reasons.add(reason);
+    } catch (error) {
+      log(env, 'error', { where: 'scheduled', name: errorName(error) });
+      if (!promptSent) reasons.add('prompt-not-sent');
+      reasons.add('exception');
+    }
+    await reportHeartbeat(env, reasons);
   },
 };

@@ -32,6 +32,11 @@ Each message is stored as sent. Sending the same item twice on one day stores it
 - The cell token is the `evening-checkin` automation from platform-empire `contracts/automations/v1/automations.json`. It has read/write only on health-metric, time-log and journal-entry. platform-empire's hosted token-rotate pushes a fresh token to this Worker's `EMPIRE_CHECKIN_TOKEN` secret (`deployments.json`).
 - Logs carry counts and HTTP statuses only, never values.
 
+## Monitoring (SPEC-002)
+
+- After the 21:30 prompt the cron reads `getWebhookInfo` and posts one heartbeat `checkin-daily` to the uptime monitor: `{"ok":true,"failed":[]}`, or `ok:false` with fixed reason codes (`prompt-not-sent`, `webhook-info-unavailable`, `webhook-url-mismatch`, `webhook-updates-missing`, `webhook-recent-error`, `webhook-pending-backlog`, `exception`). The monitor alerts on `ok:false` at once and on a missing report after 25 h.
+- Every log line carries `version` (Workers version metadata) and Workers Logs keep them (`[observability]`). An unexpected exception logs `{event:"error", where, name}` only; after the secret check the owner also gets a short chat notice.
+
 ## Deploy
 
 ```
@@ -39,7 +44,7 @@ npm ci && npm test
 infisical run --projectId "$INFISICAL_PROJECT_ID" --env dev --path /cloudflare --silent -- npx wrangler deploy
 ```
 
-Secrets (`wrangler secret put`): `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (Infisical `/telegram` NOTI values), `TELEGRAM_WEBHOOK_SECRET` (Infisical `/telegram` `TELEGRAM_CHECKIN_WEBHOOK_SECRET`), and `EMPIRE_CHECKIN_TOKEN` (set by token-rotate).
+Secrets (`wrangler secret put`): `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (Infisical `/telegram` NOTI values), `TELEGRAM_WEBHOOK_SECRET` (Infisical `/telegram` `TELEGRAM_CHECKIN_WEBHOOK_SECRET`), and `EMPIRE_CHECKIN_TOKEN` (set by token-rotate). Since SPEC-002 also `HEARTBEAT_TOKEN` (Infisical `/monitoring`), used to report the daily heartbeat `checkin-daily` to the uptime monitor; when that token is rotated, update this Worker too.
 
 Webhook: `setWebhook` with `url=https://solo-empire-checkin.bookchaowalit.workers.dev/telegram`, `secret_token=<TELEGRAM_CHECKIN_WEBHOOK_SECRET>`, `allowed_updates=["message","edited_message"]` (SPEC-001 v1.2: edits get the hint from AC-19).
 
