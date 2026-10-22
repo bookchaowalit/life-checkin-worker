@@ -78,7 +78,7 @@ Common definitions:
 - **Given** `HEARTBEATS` in platform-uptime-worker `src/targets.ts`
 - **Then** it contains `{ job: "checkin-daily", maxAgeHours: 25 }`
 - **And** with the monitor's existing behaviour: `ok:false` alerts once per report; a report older than 25 h alerts, then every 6 h; a job with **no record at all** alerts "never reported" at the monitor's next shard-0 run (≤ 5 min after the deploy) and every 6 h until the first report; and a POST for a job not in `HEARTBEATS` gets 404 and is not recorded
-- **Test:** platform-uptime-worker `test/monitor.test.ts > "HEARTBEATS watches the daily check-in run"` · level: unit
+- **Test:** platform-uptime-worker `test/monitor.test.ts > "watches the daily check-in run (life-checkin-worker SPEC-002 AC-25)"` · level: unit
 
 ### AC-26 — Reporting never breaks the check-in
 
@@ -112,7 +112,7 @@ Common definitions:
 ### AC-29 — Logs are kept (only if D-1 = a)
 
 - **Given** `wrangler.toml`
-- **Then** it contains `[observability] enabled = true`, and `wrangler deploy --dry-run` accepts it
+- **Then** it contains `[observability] enabled = true` and `[observability.logs] enabled = true` with `invocation_logs = false` (console lines only; v1.1), and `wrangler deploy --dry-run` accepts it
 - **Test:** config check in CI (`grep` step or test reading `wrangler.toml`) · level: config
 
 ## 4. Interfaces and data
@@ -155,8 +155,8 @@ Common definitions:
 
 | Scenario | Test | Red: commit · command · failure message | Green: commit · CI run | Refactor note |
 |---|---|---|---|---|
-| AC-23..AC-29 | `test/observability.test.ts`, `test/errors.test.ts` | `ca815c4` · `npx vitest run` · 28 failed, e.g. AC-23 `expected [ 'sendMessage' ] to deeply equal [ 'sendMessage', …(2) ]`, AC-28 `promise rejected "Error: SENTINEL in cron" instead of resolving`; checker rerun before the push: valid red, 0 blocking. `49a2f1a` (checker notes): 3 more failing cases, 31 failed at the red code | green commit below; CI run of the pushed tip | AC-09 (SPEC-001) now counts `sendMessage` calls only (`0a32c32`, passes before and after); the webhook-path test is an already-green guard |
-| AC-25 | platform-uptime-worker `test/monitor.test.ts` | — | — | — |
+| AC-23..AC-29 | `test/observability.test.ts`, `test/errors.test.ts` | `ca815c4` · `npx vitest run` · 28 failed, e.g. AC-23 `expected [ 'sendMessage' ] to deeply equal [ 'sendMessage', …(2) ]`, AC-28 `promise rejected "Error: SENTINEL in cron" instead of resolving`; checker rerun before the push: valid red, 0 blocking. `49a2f1a` (checker notes): 3 more failing cases, 31 failed at the red code | `b9b087d` (green, 57 passed, lines 96.96%); `775cc7d` → `808e29f` invocation logs off (security review); `8610970` → `bce2deb` error-name check (code review); 59 passed. CI of each pushed tip | AC-09 (SPEC-001) now counts `sendMessage` calls only (`0a32c32`, passes before and after); the webhook-path test is an already-green guard |
+| AC-25 | platform-uptime-worker `test/monitor.test.ts > "watches the daily check-in run (life-checkin-worker SPEC-002 AC-25)"` | `7866d69` · `npx vitest run` · `expected undefined to be 25`; checker rerun before the push: valid red | `f82e052`, 36 passed | — |
 
 ## 7. Decisions for the owner, risks and open questions
 
