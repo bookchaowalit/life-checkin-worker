@@ -108,6 +108,23 @@ describe('SPEC-002 exceptions', () => {
     expect(logs.join('\n')).not.toContain('SENTINEL');
   });
 
+  it('AC-28 an error name that is not a plain identifier is logged as "unknown"', async () => {
+    const odd = new Error('SENTINEL');
+    odd.name = 'SENTINEL นอน 7 user text';
+    fault.value = odd;
+    await worker.fetch(reply('นอน 7'), env, ctx);
+    expect(errorLines()).toEqual([{ event: 'error', where: 'telegram', name: 'unknown', version: 'v-123' }]);
+    expect(logs.join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('AC-28 a non-Error thrown in scheduled is named "unknown" and still reported', async () => {
+    fault.value = 'SENTINEL string';
+    await worker.scheduled({ cron: '30 14 * * *', scheduledTime: Date.parse('2026-10-23T14:30:00Z') } as ScheduledController, env, ctx);
+    expect(errorLines()).toEqual([{ event: 'error', where: 'scheduled', name: 'unknown', version: 'v-123' }]);
+    const hb = calls.find((c) => c.url === `${MONITOR}/heartbeat/checkin-daily`);
+    expect(JSON.parse(String(hb?.init.body))).toEqual({ ok: false, failed: ['prompt-not-sent', 'exception'] });
+  });
+
   it('AC-28 an exception in scheduled still reports a heartbeat', async () => {
     fault.value = new Error('SENTINEL in cron');
     await expect(worker.scheduled({ cron: '30 14 * * *', scheduledTime: Date.parse('2026-10-23T14:30:00Z') } as ScheduledController, env, ctx)).resolves.toBeUndefined();
