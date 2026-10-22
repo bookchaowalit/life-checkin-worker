@@ -41,6 +41,6 @@ infisical run --projectId "$INFISICAL_PROJECT_ID" --env dev --path /cloudflare -
 
 Secrets (`wrangler secret put`): `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (Infisical `/telegram` NOTI values), `TELEGRAM_WEBHOOK_SECRET` (Infisical `/telegram` `TELEGRAM_CHECKIN_WEBHOOK_SECRET`), and `EMPIRE_CHECKIN_TOKEN` (set by token-rotate).
 
-Webhook: `setWebhook` with `url=https://solo-empire-checkin.bookchaowalit.workers.dev/telegram`, `secret_token=<TELEGRAM_CHECKIN_WEBHOOK_SECRET>`, `allowed_updates=["message"]`.
+Webhook: `setWebhook` with `url=https://solo-empire-checkin.bookchaowalit.workers.dev/telegram`, `secret_token=<TELEGRAM_CHECKIN_WEBHOOK_SECRET>`, `allowed_updates=["message","edited_message"]` (SPEC-001 v1.2: edits get the hint from AC-19).
 
 Spec: [SPEC-001](specs/001-evening-checkin/spec.md).
