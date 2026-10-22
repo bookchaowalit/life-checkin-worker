@@ -126,3 +126,21 @@ describe('parseCheckin v1.1 (review fixes)', () => {
     expect(p.metrics).toEqual([{ type: 'exercise_minutes', value: 20, unit: 'min', activity: 'walk' }]);
   });
 });
+
+describe('parseCheckin v1.2 (SDLC review fixes)', () => {
+  it('AC-20 compound exercise durations', () => {
+    const p = parseCheckin('ออกกำลัง 1h30m วิ่ง\nออกกำลัง 1 ชม. 15 นาที', evening);
+    expect(p.metrics).toEqual([
+      { type: 'exercise_minutes', value: 90, unit: 'min', activity: 'วิ่ง' },
+      { type: 'exercise_minutes', value: 75, unit: 'min' },
+    ]);
+  });
+
+  it('AC-21 a Thai keyword may touch a Latin word', () => {
+    const p = parseCheckin('งานCuteERP 5\nเรียนTypeScript 1', evening);
+    expect(p.timeLogs).toEqual([
+      { domain: 'work', activity: 'CuteERP', minutes: 300 },
+      { domain: 'learning', activity: 'TypeScript', minutes: 60 },
+    ]);
+  });
+});
