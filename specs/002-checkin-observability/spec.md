@@ -14,7 +14,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 | Field | Value |
 |---|---|
-| Spec ID / version | SPEC-002 / 1.0 |
+| Spec ID / version | SPEC-002 / 1.1 |
 | Status | **approved** by the owner 2026-10-22, before any code; implemented (Worker), monitor AC-25 and deploy pending |
 | Repository / path | bookchaowalit/life-checkin-worker / `specs/002-checkin-observability/spec.md` |
 | Owner (maker) | Claude Code |
@@ -162,7 +162,7 @@ Common definitions:
 
 | # | Decision or risk | Options | Proposed |
 |---|---|---|---|
-| D-1 | How errors are kept (OBS-GAP-05, TD-006) | (a) turn on Workers Logs persistence (`[observability] enabled = true`; retention per the Cloudflare plan **[ต้องยืนยัน]**), plus the chat notice on a failed reply; (b) only the chat notice and the live-tail log; (c) add Sentry (new vendor, later spec) | **(a)**. OBS-GAP-05 is then closed for keeping errors, but there is no alerting on errors beyond the chat notice and the daily heartbeat; TD-006's Sentry part stays open. Workers Logs also keep each invocation's method and URL; the paths `/telegram` and `/health` carry no secret, so this is acceptable |
+| D-1 | How errors are kept (OBS-GAP-05, TD-006) | (a) turn on Workers Logs persistence (`[observability] enabled = true`; retention per the Cloudflare plan **[ต้องยืนยัน]**), plus the chat notice on a failed reply; (b) only the chat notice and the live-tail log; (c) add Sentry (new vendor, later spec) | **(a)**. OBS-GAP-05 is then closed for keeping errors, but there is no alerting on errors beyond the chat notice and the daily heartbeat; TD-006's Sentry part stays open. Invocation logs are turned off (`[observability.logs] invocation_logs = false`): they can record request headers, and Telegram sends the webhook secret in `X-Telegram-Bot-Api-Secret-Token` (automated security review of `b9b087d`, 2026-10-22); only the Worker's own console lines are kept |
 | D-2 | `HEARTBEAT_TOKEN` is one token for every monitor job. Copying it into this public-facing Worker means a leak could fake or suppress heartbeats of `db-backup`, `restore-drill`, `token-rotate` | (a) accept, add the Worker to the rotation runbook; (b) first add per-job tokens to the monitor (separate spec) | **(a)**: the Worker already holds the bot token, and secrets stay in Cloudflare's secret store |
 | D-3 | Backlog threshold P for `webhook-pending-backlog` | any number | **10** pending updates at 21:30 |
 | D-4 | A cron that never fires is detected only after 25 h (OBS-GAP-02 asked for 21:40) | (a) accept; (b) add a second check at 21:40 from the monitor (later spec) | **(a)** for a once-a-day personal tool |
@@ -176,6 +176,7 @@ Common definitions:
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 2026-10-22 | Draft for review |
+| 1.1 | 2026-10-22 | Implementation detail under D-1: invocation logs off, console logs only (security review); AC-29 test asserts it. Within the approved decision, no scope change |
 | 1.0 | 2026-10-22 | Approved by the owner with D-1..D-4 as proposed; no content change from 0.3 |
 | 0.3 | 2026-10-22 | Review v0.2 (2 blocking, 2 non-blocking): deploy order and monitor behaviour for unknown or never-reported jobs corrected (F1); the chat notice no longer claims nothing was stored (F2); exception injection through `vi.mock` and the `prompt-not-sent` + `exception` result (F3); AC-29 removal rule and invocation-log note (F4) |
 | 0.2 | 2026-10-22 | Review v0.1 (3 blocking, 8 non-blocking): default `allowed_updates` is not a failure (B2); exception paths, `where` boundaries, injection points and content checks defined (B3); log persistence and owner chat notice as decision D-1, "closes" claims corrected (B1); seconds vs milliseconds, fixed reason order, backlog reason, `sendMessage` boolean, log helper, sentinel tests, deploy order, rotation step, no-retry by design, detection-time split, D-2..D-4 |

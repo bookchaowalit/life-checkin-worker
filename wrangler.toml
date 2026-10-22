@@ -28,3 +28,9 @@ binding = "CF_VERSION_METADATA"
 
 [observability]
 enabled = true
+
+# Keep only the Worker's own console lines. Invocation logs can record request headers, and Telegram
+# sends the webhook secret in X-Telegram-Bot-Api-Secret-Token (security review of b9b087d).
+[observability.logs]
+enabled = true
+invocation_logs = false
