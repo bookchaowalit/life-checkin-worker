@@ -12,6 +12,11 @@ export interface Env {
   HEALTH_ORIGIN: string;
   TIME_ORIGIN: string;
   DIARY_ORIGIN: string;
+  // SPEC-002 (red stub: declared, not used yet)
+  PUBLIC_ORIGIN?: string;
+  MONITOR_ORIGIN?: string;
+  HEARTBEAT_TOKEN?: string;
+  CF_VERSION_METADATA?: { id: string };
 }
 
 const SERVICE = 'solo-empire-checkin';
