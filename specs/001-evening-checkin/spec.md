@@ -14,7 +14,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 | Field | Value |
 |---|---|
-| Spec ID / version | SPEC-001 / 1.1 |
+| Spec ID / version | SPEC-001 / 1.2 |
 | Status | **implemented** |
 | Repository / path | bookchaowalit/life-checkin-worker / `specs/001-evening-checkin/spec.md` |
 | Owner (maker) | Claude Code |
@@ -191,6 +191,26 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 AC-02, AC-06, AC-07, AC-08, AC-09 and AC-10 gained further assertions in v1.1: English mood, energy and exercise lines; a non-JSON body gets 400; an unset secret gets 401; the full record bodies; the failed item is named in the reply; `/checkin` sends the prompt rather than help; `/help` works.
 
+### AC-20 — Compound exercise durations (v1.2, review R-02)
+
+- **Given** `ออกกำลัง 1h30m วิ่ง` and `ออกกำลัง 1 ชม. 15 นาที`
+- **Then** they give 90 min (วิ่ง) and 75 min. Before this fix, the first was stored as 60 min with no rejection
+- **Test:** `test/parse.test.ts > "AC-20 compound exercise durations"` · level: unit
+
+### AC-21 — A Thai keyword may touch a Latin word (v1.2, R-02)
+
+- **Given** `งานCuteERP 5` and `เรียนTypeScript 1`
+- **Then** they give work/CuteERP 300 and learning/TypeScript 60. A keyword only has to be followed by something other than a letter of its own script, so `งานบ้าน` and `noted` still don't match (AC-12)
+- **Test:** `test/parse.test.ts > "AC-21 a Thai keyword may touch a Latin word"` · level: unit
+
+### AC-22 — Cell writes allow a sleeping cell to wake (v1.2, R-02)
+
+- **Given** cells that sleep when idle (measured wake time 1.2–3.6 s)
+- **Then** each cell write allows at least 12 s, and the Telegram reply allows 5 s
+- **Test:** `test/worker.test.ts > "AC-22 cell writes wait long enough for a sleeping cell to wake"` · level: integration
+
+The webhook subscribes to `["message","edited_message"]` from v1.2. With only `message`, the AC-19 edit hint could never fire.
+
 ## 4. Interfaces and data
 
 | Interface | Change | Contract |
@@ -209,7 +229,7 @@ AC-02, AC-06, AC-07, AC-08, AC-09 and AC-10 gained further assertions in v1.1: E
 
 | NFR | Target | How it is tested |
 |---|---|---|
-| Performance | Webhook reply within about 10 s (parallel cell writes at 5 s, plus Telegram at 5 s). At most 40 records + 1 Telegram call, under the 50-subrequest free-plan limit | AC-07, AC-17 |
+| Performance | Webhook reply within about 17 s in the worst case: parallel cell writes at 12 s (cold cells), then Telegram at 5 s. Telegram allows far longer. At most 40 records + 1 Telegram call, under the 50-subrequest free-plan limit | AC-07, AC-17, AC-22 |
 | Security / privacy | Secret-header check (constant-time compare). Chat allowlist. The token has only the read/write scopes for health-metric, time-log and journal-entry. No values are logged; only counts and HTTP statuses | AC-06, AC-11; reviewer check of the scopes in platform-empire |
 | Reliability / observability | Always 200 after the secret check, so Telegram doesn't retry. Idempotency keys stop duplicates if it does retry. `/health` is added to the uptime monitor | AC-07, AC-08; uptime target |
 | Accessibility / UX | Replies are plain Thai text that is readable on a phone | Manual check of the first live reply |
@@ -243,3 +263,4 @@ AC-02, AC-06, AC-07, AC-08, AC-09 and AC-10 gained further assertions in v1.1: E
 |---|---|---|
 | 1.0 | 2026-10-21 | First approved version |
 | 1.1 | 2026-10-21 | Independent review R-01 (fresh Claude reviewer): 0 blocking, 9 should-fix, all fixed via AC-12..AC-19. Coverage ratcheted from 94 to 96 |
+| 1.2 | 2026-10-22 | SDLC pack review R-02: compound exercise durations, Thai keyword touching Latin, 12 s cell timeout for cold cells (AC-20..AC-22); webhook `allowed_updates` now includes `edited_message`. Red `78882d4` · `npx vitest run` · `expected 5000 to be greater than or equal to 12000` (AC-22) |

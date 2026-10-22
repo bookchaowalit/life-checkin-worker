@@ -19,21 +19,29 @@ const SEP = '\\s*[:：=]?\\s*';
 const HOURS = 'ชั่วโมง|ชม\\.?|hours?|hrs?|h';
 const MINUTES = 'นาที|minutes?|mins?|m';
 const UNIT_END = '(?![a-z])';
-// A keyword must end at a space, a colon or the end of the line ("งานบ้าน" is not "งาน").
-const KW_END = '(?=[\\s:：=]|$)';
+// A keyword must not run into a longer word of its own script: "งานบ้าน" is not "งาน" and "noted" is
+// not "note", but "งานCuteERP" is "งาน" + "CuteERP".
+const TH_END = '(?![\\u0E00-\\u0E7F])';
+const EN_END = '(?![a-z])';
 
-const DIARY = new RegExp(`^(?:บันทึก|ไดอารี่|diary|note|โน้ต)${KW_END}\\s*[:：]?\\s*(.*)$`, 'i');
+const DIARY = new RegExp(`^(?:(?:บันทึก|ไดอารี่|โน้ต)${TH_END}|(?:diary|note)${EN_END})\\s*[:：]?\\s*(.*)$`, 'i');
 const WEIGHT = new RegExp(`^(?:น้ำหนัก|นน\\.?|weight)${SEP}${NUM}\\s*(?:kg|กก\\.?|กิโล(?:กรัม)?)?$`, 'i');
 const WATER = new RegExp(`^(?:น้ำ|ดื่มน้ำ|water)${SEP}${NUM}\\s*(ลิตร|l|ml|มล\\.?)?$`, 'i');
 const SLEEP = new RegExp(`^(?:นอน|หลับ|sleep)${SEP}(\\d+:\\d{2}|${NUM}\\s*(?:(?:${HOURS})${UNIT_END})?)$`, 'i');
 const MOOD = new RegExp(`^(?:อารมณ์|mood)${SEP}${NUM}\\s*(?:\\/\\s*5)?$`, 'i');
 const ENERGY = new RegExp(`^(?:พลังงาน|energy)${SEP}${NUM}\\s*(?:\\/\\s*5)?$`, 'i');
-const EXERCISE = new RegExp(`^(?:ออกกำลัง(?:กาย)?|exercise|workout)${SEP}${NUM}\\s*(?:(${HOURS}|${MINUTES})${UNIT_END})?\\s*(.*)$`, 'i');
+const EXERCISE = new RegExp(
+  `^(?:ออกกำลัง(?:กาย)?|exercise|workout)${SEP}${NUM}\\s*(?:(${HOURS}|${MINUTES})${UNIT_END})?(?:\\s*(\\d+)\\s*(?:${MINUTES})${UNIT_END})?\\s*(.*)$`,
+  'i',
+);
 const ACTIVITY_FIRST = new RegExp(
   `^(วิ่ง|เดิน|ยิม|ว่ายน้ำ|ปั่นจักรยาน|ปั่น|โยคะ|เวท|run|walk|gym|swim|bike|cycling|yoga|weights?)\\s*${NUM}\\s*(?:(${HOURS}|${MINUTES})${UNIT_END})?$`,
   'i',
 );
-const TIME = new RegExp(`^(งาน|ทำงาน|work|เรียน|learn(?:ing)?|study|ส่วนตัว|personal)${KW_END}\\s*[:：]?\\s*(.*)$`, 'i');
+const TIME = new RegExp(
+  `^(?:(งาน|ทำงาน|เรียน|ส่วนตัว)${TH_END}|(work|learn(?:ing)?|study|personal)${EN_END})\\s*[:：]?\\s*(.*)$`,
+  'i',
+);
 const COMPOUND = new RegExp(`^(.*?)\\s*${NUM}\\s*(?:${HOURS})\\s*(\\d+)\\s*(?:${MINUTES})${UNIT_END}$`, 'i');
 const DURATION = new RegExp(`^(.*?)\\s*(?:(\\d+):(\\d{2})|${NUM}\\s*(?:(${HOURS}|${MINUTES})${UNIT_END})?)$`, 'i');
 // A label that still ends in a number + unit means the duration was written in a form we don't read.
@@ -148,13 +156,13 @@ export function parseCheckin(text: string, now: Date): Parsed {
       else energy = score;
     } else if ((m = EXERCISE.exec(line)) || (m = ACTIVITY_FIRST.exec(line))) {
       const activityFirst = !/^(?:ออกกำลัง|exercise|workout)/i.test(line);
-      const [num, unit, activity] = activityFirst ? [m[2], m[3], m[1]] : [m[1], m[2], m[3]];
-      const value = Math.round(isHours(unit) ? Number(num) * 60 : Number(num));
+      const [num, unit, extraMinutes, activity] = activityFirst ? [m[2], m[3], undefined, m[1]] : [m[1], m[2], m[3], m[4]];
+      const value = Math.round((isHours(unit) ? Number(num) * 60 : Number(num)) + Number(extraMinutes ?? 0));
       if (!inRange(value, 1, 600)) rejected.push({ line, reason: 'ออกกำลังต้องอยู่ระหว่าง 1–600 นาที' });
       else metrics.push({ type: 'exercise_minutes', value, unit: 'min', ...(activity?.trim() ? { activity: activity.trim() } : {}) });
     } else if ((m = TIME.exec(line))) {
-      const keyword = m[1];
-      const items = m[2].split(/[,;、]/).map((s) => s.trim()).filter(Boolean);
+      const keyword = m[1] ?? m[2];
+      const items = m[3].split(/[,;、]/).map((s) => s.trim()).filter(Boolean);
       const parsed = items.map((item) => parseWorkItem(item, keyword));
       if (items.length === 0 || parsed.every((p) => p === null)) {
         diaryLines.push(line); // "งาน วันนี้หนักมาก" is a sentence, not a time log

@@ -16,8 +16,10 @@ export interface Env {
 
 const SERVICE = 'solo-empire-checkin';
 const SOURCE = 'telegram-checkin';
-// Cell writes run in parallel, then one Telegram call: 2 × 5 s keeps the webhook near 10 s.
-const REQUEST_TIMEOUT_MS = 5_000;
+// Cells sleep when idle and take up to ~4 s to wake, so writes get 12 s (in parallel), then Telegram 5 s.
+// Telegram waits far longer than that for a webhook answer.
+const CELL_TIMEOUT_MS = 12_000;
+const TELEGRAM_TIMEOUT_MS = 5_000;
 const TELEGRAM_TEXT_LIMIT = 4000; // Telegram's hard limit is 4096
 const BOT_USERNAME = 'book_noti_bot';
 const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
@@ -102,7 +104,7 @@ async function sendMessage(env: Env, text: string): Promise<void> {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text: body, disable_web_page_preview: true }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS),
     });
     await res.body?.cancel();
     if (!res.ok) console.log(JSON.stringify({ event: 'telegram_send_failed', status: res.status }));
@@ -124,7 +126,7 @@ async function postCell(env: Env, url: string, body: unknown, key: string, label
         'Idempotency-Key': key,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(CELL_TIMEOUT_MS),
     });
     await res.body?.cancel();
     return { label, ok: res.ok, status: res.status };

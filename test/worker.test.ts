@@ -204,11 +204,10 @@ describe('worker v1.1 (review fixes)', () => {
 
 describe('worker v1.2', () => {
   it('AC-22 cell writes wait long enough for a sleeping cell to wake', async () => {
-    const signals: AbortSignal[] = [];
-    vi.stubGlobal('AbortSignal', { ...AbortSignal, timeout: (ms: number) => { timeouts.push(ms); return new AbortController().signal; } });
     const timeouts: number[] = [];
+    vi.stubGlobal('AbortSignal', { ...AbortSignal, timeout: (ms: number) => { timeouts.push(ms); return new AbortController().signal; } });
     await worker.fetch(post(update(FULL)), env, ctx);
+    // Every cell write, then the one Telegram reply last.
     expect(Math.min(...timeouts.slice(0, -1))).toBeGreaterThanOrEqual(12_000);
-    expect(signals).toEqual([]);
   });
 });
