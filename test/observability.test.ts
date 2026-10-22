@@ -187,6 +187,8 @@ describe('SPEC-002 version on log lines', () => {
 describe('SPEC-002 configuration', () => {
   it('AC-29 wrangler.toml keeps logs and binds the version metadata', () => {
     expect(toml).toMatch(/^\[observability\]\s*\nenabled\s*=\s*true/m);
+    // Only our console lines: invocation logs could keep request headers, and Telegram sends the webhook secret in one.
+    expect(toml).toMatch(/^\[observability\.logs\]\s*\nenabled\s*=\s*true\s*\ninvocation_logs\s*=\s*false/m);
     expect(toml).toMatch(/^\[version_metadata\]\s*\nbinding\s*=\s*"CF_VERSION_METADATA"/m);
     expect(toml).toMatch(/^PUBLIC_ORIGIN\s*=\s*"https:\/\/solo-empire-checkin\.bookchaowalit\.workers\.dev"/m);
     expect(toml).toMatch(/^MONITOR_ORIGIN\s*=\s*"https:\/\/solo-empire-monitor\.bookchaowalit\.workers\.dev"/m);
