@@ -49,8 +49,9 @@ function log(env: Env, event: string, fields: Record<string, unknown> = {}): voi
   console.log(JSON.stringify({ event, ...fields, version: env.CF_VERSION_METADATA?.id ?? 'unknown' }));
 }
 
-/** The error's name only: messages and stacks may carry user text (SPEC-002 AC-28). */
-const errorName = (error: unknown) => (error instanceof Error ? error.name : 'unknown');
+/** The error's name only, and only a plain identifier: messages and stacks may carry user text (SPEC-002 AC-28). */
+const errorName = (error: unknown) =>
+  error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(error.name) ? error.name : 'unknown';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
