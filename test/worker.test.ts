@@ -106,12 +106,14 @@ describe('worker', () => {
 
   it('AC-09 sends the prompt on cron and on /checkin', async () => {
     await worker.scheduled({ cron: '30 14 * * *', scheduledTime: Date.parse('2026-10-22T14:30:00Z') } as ScheduledController, env, ctx);
-    expect(telegramCalls()).toHaveLength(1);
-    const prompt = sentText(telegramCalls()[0]);
+    // Count sendMessage only: since SPEC-002 the cron also reads getWebhookInfo.
+    const sends = () => telegramCalls().filter((c) => c.url.endsWith('/sendMessage'));
+    expect(sends()).toHaveLength(1);
+    const prompt = sentText(sends()[0]);
     expect(prompt).toContain('เช็คอินตอนค่ำ');
     expect(prompt).toContain('22');
     expect(prompt).toContain('นอน');
-    expect(JSON.parse(String(telegramCalls()[0].init.body)).chat_id).toBe('1001');
+    expect(JSON.parse(String(sends()[0].init.body)).chat_id).toBe('1001');
     calls = [];
     await worker.fetch(post(update('/checkin')), env, ctx);
     expect(telegramCalls()).toHaveLength(1);
