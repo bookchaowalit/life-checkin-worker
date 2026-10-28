@@ -29,6 +29,7 @@ Each message is stored as sent. Sending the same item twice on one day stores it
 ## Security
 
 - `POST /telegram` requires Telegram's `X-Telegram-Bot-Api-Secret-Token` header to match `TELEGRAM_WEBHOOK_SECRET`. Only `TELEGRAM_CHAT_ID` is answered.
+- `POST /apple-health` (SPEC-003) requires `Authorization: Bearer <APPLE_HEALTH_TOKEN>`. It takes one day of Apple Health totals from the owner's iOS Shortcut and writes them to the health cell as `source=apple-health`. Setup: [docs/apple-health-shortcut.md](docs/apple-health-shortcut.md).
 - The cell token is the `evening-checkin` automation from platform-empire `contracts/automations/v1/automations.json`. It has read/write only on health-metric, time-log and journal-entry. platform-empire's hosted token-rotate pushes a fresh token to this Worker's `EMPIRE_CHECKIN_TOKEN` secret (`deployments.json`).
 - Logs carry counts and HTTP statuses only, never values.
 

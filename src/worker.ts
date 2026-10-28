@@ -2,6 +2,7 @@
 // Cron sends the prompt; POST /telegram (the bot webhook) parses the owner's reply and writes it to
 // the health, time and diary cells with the `evening-checkin` automation token. Values are never logged.
 
+import { parseAppleHealth } from './apple-health';
 import { parseCheckin, type Metric, type Parsed, type TimeLog } from './parse';
 
 export interface Env {
@@ -17,10 +18,15 @@ export interface Env {
   MONITOR_ORIGIN?: string;
   HEARTBEAT_TOKEN?: string;
   CF_VERSION_METADATA?: { id: string };
+  // SPEC-003: the iOS Shortcut's bearer secret for POST /apple-health
+  APPLE_HEALTH_TOKEN?: string;
 }
 
 const SERVICE = 'solo-empire-checkin';
 const SOURCE = 'telegram-checkin';
+// SPEC-003
+const APPLE_SOURCE = 'apple-health';
+const APPLE_MAX_BYTES = 16 * 1024;
 // Cells sleep when idle and take up to ~4 s to wake, so writes get 12 s (in parallel), then Telegram 5 s.
 // Telegram waits far longer than that for a webhook answer.
 const CELL_TIMEOUT_MS = 12_000;
@@ -251,6 +257,38 @@ async function handleTelegram(request: Request, env: Env, authorised: () => void
   return json({ ok: true });
 }
 
+/** SPEC-003: one day of Apple Health totals from the owner's iOS Shortcut. Logs counts only. */
+async function handleAppleHealth(request: Request, env: Env): Promise<Response> {
+  const auth = request.headers.get('Authorization') ?? '';
+  if (!env.APPLE_HEALTH_TOKEN || !safeEqual(auth, `Bearer ${env.APPLE_HEALTH_TOKEN}`)) return json({ ok: false }, 401);
+
+  const text = await request.text();
+  if (new TextEncoder().encode(text).length > APPLE_MAX_BYTES) return json({ ok: false, error: 'too-large' }, 413);
+  let body: unknown;
+  try { body = JSON.parse(text); } catch { return json({ ok: false, error: 'invalid-body' }, 400); }
+  const day = parseAppleHealth(body, new Date());
+  if ('error' in day) return json({ ok: false, error: day.error }, 400);
+
+  const results = await Promise.all(day.metrics.map((m) => postCell(env, `${env.HEALTH_ORIGIN}/v1/health-metrics`, {
+    source: APPLE_SOURCE,
+    metric_type: m.type,
+    value: m.value,
+    unit: m.unit,
+    recorded_at: `${day.date}T23:59:00+07:00`,
+    metadata: JSON.stringify({ date: day.date, via: 'ios-shortcut' }),
+  }, `${APPLE_SOURCE}:${day.date}:${m.type}`, m.type)));
+  const written = results.filter((r) => r.ok).map((r) => r.label);
+  const failed = results.filter((r) => !r.ok).map((r) => ({ metric: r.label, status: r.status ?? 0 }));
+  log(env, 'apple_health', { written: written.length, failed: failed.map((f) => f.status), rejected: day.rejected.length });
+
+  const ok = written.length > 0 && failed.length === 0;
+  const message = ok
+    ? `✅ บันทึก Apple Health ${written.length} ค่า · ${thaiDate(day.date)}`
+    : `⚠️ Apple Health · ${thaiDate(day.date)}: บันทึก ${written.length}, ไม่สำเร็จ ${failed.length}, อ่านไม่ได้ ${day.rejected.length}`;
+  const status = ok ? 200 : failed.length ? 502 : 422;
+  return json({ ok, date: day.date, written, failed, rejected: day.rejected, message }, status);
+}
+
 interface WebhookInfo { url?: string; allowed_updates?: string[]; last_error_date?: number; pending_update_count?: number }
 
 /** Compare the live webhook registration with what this Worker expects. Reads no field into a log. */
@@ -309,6 +347,7 @@ export default {
       const { pathname } = new URL(request.url);
       if (pathname === '/health' && request.method === 'GET') return json({ ok: true, service: SERVICE });
       if (pathname === '/telegram' && request.method === 'POST') return await handleTelegram(request, env, () => { authorised = true; });
+      if (pathname === '/apple-health' && request.method === 'POST') return await handleAppleHealth(request, env);
       return json({ ok: false }, 404);
     } catch (error) {
       log(env, 'error', { where: authorised ? 'telegram' : 'fetch', name: errorName(error) });

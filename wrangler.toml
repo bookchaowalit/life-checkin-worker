@@ -12,7 +12,8 @@ workers_dev = true
 crons = ["30 14 * * *"]
 
 # Cell origins (solo-empire cells on Railway). Secrets are set with `wrangler secret put`:
-# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, EMPIRE_CHECKIN_TOKEN (rotated by platform-empire).
+# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, EMPIRE_CHECKIN_TOKEN (rotated by platform-empire),
+# APPLE_HEALTH_TOKEN (SPEC-003, Infisical /apple-health; the iOS Shortcut sends it as a bearer).
 [vars]
 HEALTH_ORIGIN = "https://health-api-production-c72f.up.railway.app"
 TIME_ORIGIN = "https://time-api-production-2050.up.railway.app"
