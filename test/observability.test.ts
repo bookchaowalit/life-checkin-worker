@@ -191,6 +191,6 @@ describe('SPEC-002 configuration', () => {
     expect(toml).toMatch(/^\[observability\.logs\]\s*\nenabled\s*=\s*true\s*\ninvocation_logs\s*=\s*false/m);
     expect(toml).toMatch(/^\[version_metadata\]\s*\nbinding\s*=\s*"CF_VERSION_METADATA"/m);
     expect(toml).toMatch(/^PUBLIC_ORIGIN\s*=\s*"https:\/\/solo-empire-checkin\.bookchaowalit\.workers\.dev"/m);
-    expect(toml).toMatch(/^MONITOR_ORIGIN\s*=\s*"https:\/\/solo-empire-monitor\.bookchaowalit\.workers\.dev"/m);
+    expect(toml).toMatch(/^MONITOR_ORIGIN\s*=\s*"https:\/\/monitor\.bookchaowalit\.com"/m);
   });
 });

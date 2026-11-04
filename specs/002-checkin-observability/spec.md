@@ -123,7 +123,7 @@ Common definitions:
 | `sendMessage` (internal) | returns `Promise<boolean>` | `true` only for a 2xx from Telegram; still never throws. The webhook path ignores the result, so its behaviour is unchanged |
 | Monitor `POST /heartbeat/checkin-daily` | new caller | `Authorization: Bearer <HEARTBEAT_TOKEN>`, JSON `{ok, failed}`, 5 s timeout, one attempt |
 | platform-uptime-worker `HEARTBEATS` | +1 job | `checkin-daily`, 25 h |
-| `wrangler.toml` | new vars, binding, observability | vars `PUBLIC_ORIGIN = "https://solo-empire-checkin.bookchaowalit.workers.dev"`, `MONITOR_ORIGIN = "https://solo-empire-monitor.bookchaowalit.workers.dev"`; `[version_metadata] binding = "CF_VERSION_METADATA"`; `[observability] enabled = true` if D-1 = a |
+| `wrangler.toml` | new vars, binding, observability | vars `PUBLIC_ORIGIN = "https://solo-empire-checkin.bookchaowalit.workers.dev"`, `MONITOR_ORIGIN = "https://monitor.bookchaowalit.com"`; `[version_metadata] binding = "CF_VERSION_METADATA"`; `[observability] enabled = true` if D-1 = a |
 | Worker secret | new | `HEARTBEAT_TOKEN`, copied from Infisical `/monitoring` with `wrangler secret put` (never printed) |
 | Log helper | new | `log(env, event, fields)` adds `version`; events `checkin`, `telegram_send_failed`, `heartbeat_failed`, `error` |
 
