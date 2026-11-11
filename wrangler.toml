@@ -11,13 +11,15 @@ workers_dev = true
 [triggers]
 crons = ["30 14 * * *"]
 
-# Cell origins (solo-empire cells on Railway). Secrets are set with `wrangler secret put`:
+# Cell origins: the edge gateway (platform-api-gateway, gateway.bookchaowalit.com/v1/<system>) since
+# 2026-11-11. Rollback: the direct *.up.railway.app origins are in the gateway routes.json.
+# Secrets are set with `wrangler secret put`:
 # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET, EMPIRE_CHECKIN_TOKEN (rotated by platform-empire),
 # APPLE_HEALTH_TOKEN (SPEC-003, Infisical /apple-health; the iOS Shortcut sends it as a bearer).
 [vars]
-HEALTH_ORIGIN = "https://health-api-production-c72f.up.railway.app"
-TIME_ORIGIN = "https://time-api-production-2050.up.railway.app"
-DIARY_ORIGIN = "https://diary-api-production-2db8.up.railway.app"
+HEALTH_ORIGIN = "https://gateway.bookchaowalit.com/v1/health"
+TIME_ORIGIN = "https://gateway.bookchaowalit.com/v1/time"
+DIARY_ORIGIN = "https://gateway.bookchaowalit.com/v1/diary"
 # SPEC-002: the cron checks the webhook registration against PUBLIC_ORIGIN and reports to the monitor.
 # HEARTBEAT_TOKEN is a secret (Infisical /monitoring), set with `wrangler secret put`.
 PUBLIC_ORIGIN = "https://solo-empire-checkin.bookchaowalit.workers.dev"
