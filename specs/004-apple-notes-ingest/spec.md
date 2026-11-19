@@ -14,7 +14,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 
 | Field | Value |
 |---|---|
-| Spec ID / version | SPEC-004 / 0.2 |
+| Spec ID / version | SPEC-004 / 0.3 |
 | Status | **draft**. The owner asked for it on 2026-11-19 ("เขียน spec เลย", after the proposal to send notes from an iOS Shortcut). It needs the owner's approval of §7 before the red commit |
 | Repository / path | bookchaowalit/life-checkin-worker / `specs/004-apple-notes-ingest/spec.md` |
 | Owner (maker) | Claude Code |
@@ -26,7 +26,7 @@ Standard: ADR-0004 — TDD + SDD (architecture-docs `docs/architecture/decisions
 ## 1. Problem and intent
 
 - **Problem:** The owner writes notes in Apple Notes on the iPhone, and nothing in the platform can see them. They are not in the knowledge store, so the knowledge MCP, Knowledge Hub `/private` and the agents cannot read them. Apple offers no API for iCloud Notes. The only supported reader is the phone itself, through Shortcuts.
-- **Outcome:** An iOS Shortcut runs as a daily Personal Automation and can also be run from the Share Sheet. It finds the notes changed in the chosen folders and sends **one note per request** to `POST /apple-notes` on this Worker. The Worker checks the note and stores it as Markdown with front matter in the knowledge store at `knowledge-base:apple-notes/<note_id>.md`. The store keeps every version. Agents (`knowledge.store.list` with prefix `apple-notes/`, then `knowledge.store.get`) and Knowledge Hub `/private` can then list and open the notes like any other private document.
+- **Outcome:** An iOS Shortcut runs as a daily Personal Automation, and a second Shortcut run by hand can send one chosen note or catch up on missed days. It finds the notes changed in the chosen folders and sends **one note per request** to `POST /apple-notes` on this Worker. The Worker checks the note and stores it as Markdown with front matter in the knowledge store at `knowledge-base:apple-notes/<note_id>.md`. The store keeps every version. Agents (`knowledge.store.list` with prefix `apple-notes/`, then `knowledge.store.get`) and Knowledge Hub `/private` can then list and open the notes like any other private document.
 - **Not in v1: search by title or content.** `knowledge.search` searches the document catalog, not the store, and Knowledge Hub `/private` matches paths only. Here the path is a prefix and a hash, so a note is found by listing `apple-notes/` and reading the `title` in its front matter. A search index over the store is a later spec.
 - **Direction:** one way only, from the phone to the store. Apple Notes is the source of truth.
 
@@ -92,7 +92,7 @@ Every string value in the front matter is written as a JSON string. JSON strings
 
 - **Given** no `Authorization` header, a wrong bearer value, or a Worker with `APPLE_NOTES_TOKEN` unset
 - **When** `POST /apple-notes` is called
-- **Then** it answers 401 `{"ok":false}` and makes no store call. The compare is constant-time, using the same `safeEqual` as SPEC-003.
+- **Then** it answers 401 `{"ok":false,"error":"unauthorized","message":"⚠️ secret ของ Shortcut ไม่ถูกต้อง ให้คัดลอก APPLE_NOTES_TOKEN จาก Infisical /apple-notes ใหม่"}` and makes no store call. The compare is constant-time, using the same `safeEqual` as SPEC-003.
 - **Test:** `test/apple-notes.test.ts > "AC-40 rejects missing or wrong secrets"` · level: integration
 
 ### AC-41 — Bad input is rejected with a reason, never stored
@@ -116,8 +116,8 @@ Every string value in the front matter is written as a JSON string. JSON strings
   - **found and older** → PUT with `if_version` = the stored version → 200 `status:"updated"` with the new version
 - **And** `version` is always the `version` that the store's PUT answer gives (or the GET answer for `unchanged`), never a number the Worker counts. The store numbers versions per path across deletes, so a note re-created after a delete can come back as version 3 and still be `created`
 - **And** each store call carries a writer JWT (D-11) with scope `knowledge:write` for the PUT and `knowledge:read` for the GET
-- **And** a 409 from the PUT leads to one fresh GET and one more PUT. Only a 409 from that second PUT answers 409 `{"ok":false,"error":"conflict"}`. Any other failure of the retry GET or PUT (401, 403, 5xx, timeout) is reported under AC-44
-- **Test:** `test/apple-notes.test.ts > "AC-42 creates, updates and skips"` (including create → delete → create, which returns the store's version, not 1, and a 409 followed by a 503, which returns AC-44's 502) · level: integration
+- **And** a 409 from the PUT leads to one fresh GET, and the same rule runs again on its result: if the stored `modified` is now ≥ the request's `modified_at` (a newer copy won the race), the answer is `unchanged` and there is no second PUT, so an older copy never replaces a newer one. Otherwise there is one more PUT with the fresh version. Only a 409 from that second PUT answers 409 `{"ok":false,"error":"conflict"}`. Any other failure of the retry GET or PUT (401, 403, 5xx, timeout) is reported under AC-44
+- **Test:** `test/apple-notes.test.ts > "AC-42 creates, updates and skips"` (including create → delete → create, which returns the store's version, not 1, a 409 followed by a 503, which returns AC-44's 502, and a 409 where the fresh GET holds a newer `modified`, which returns `unchanged` with no second PUT). The store answers 201 on the first write of a path and 200 on later ones; the Worker answers 200 for both · level: integration
 
 ### AC-43 — A body that looks like a secret is refused
 
@@ -135,14 +135,14 @@ Every string value in the front matter is written as a JSON string. JSON strings
 ### AC-45 — No note text, title, folder or secret reaches the logs
 
 - **Given** a request with sentinel strings in `title`, `body`, `folder` and the secret
-- **Then** the one log line `apple_notes` holds only `status`, `error`, the store status code, the body size bucket (`<1k`, `<10k`, `<100k`, `<1M`) and the version. No sentinel appears in `console.log` output.
+- **Then** the one log line `apple_notes` holds only `status`, `error`, the store status code, the body size bucket (`<1k`, `<10k`, `<100k`, `<1M`) and the store's version as `document_version`. The key `version` stays the Worker's deployment id, which `log()` sets (SPEC-002 AC-27), and the test checks that both are present. No sentinel appears in `console.log` output.
 - **Test:** `test/apple-notes.test.ts > "AC-45 logs no content"` · level: integration
 
 ## 6. Shortcut behaviour (covered by the guide, checked by TC-E2E-04)
 
 - **Daily run:** a Personal Automation "Time of Day" at 06:30, set to Run Immediately. It runs **Find Notes** where Folder is one of the allowed folders and Last Modified Date is in the last 2 days, then **Repeat with Each** note: Make Markdown from Rich Text, then POST. At the end it shows one notification with the counts (created / updated / unchanged / failed).
-- **Share Sheet run:** the same Shortcut accepts Notes as input, so the owner can send one note at once. The folder rule still applies.
-- **Catch-up:** a second Shortcut, "ส่ง Apple Notes (ย้อนหลัง)", asks how many days back to look and is only run by hand. The automation runs the first Shortcut, which never asks for input, so it stays unattended. Notes that did not change come back `unchanged`, so re-sending them costs nothing.
+- **Send one note:** the Notes Share Sheet passes text or a link, not a Note object with its dates and folder, so it is not used. Instead the manual Shortcut runs **Find Notes** on the allowed folders and lets the owner **Choose from List** one note.
+- **Catch-up:** the same manual Shortcut, "ส่ง Apple Notes (เลือกเอง)", can also ask how many days back to look. It is only run by hand. The automation runs the first Shortcut, which never asks for input, so it stays unattended. Notes that did not change come back `unchanged`, so re-sending them costs nothing.
 - **Results:** the Shortcut checks `ok` first. When `ok` is true it counts `status` (created / updated / unchanged). When `ok` is false it counts a failure and shows `message`, or `error` when there is no message.
 
 ## 7. Decisions (proposed defaults, owner may change)
@@ -151,7 +151,7 @@ Every string value in the front matter is written as a JSON string. JSON strings
 |---|---|---|
 | D-7 | Where are notes stored? | **knowledge store**, space `knowledge-base`, prefix `apple-notes/`. This gives versions, the knowledge MCP and Knowledge Hub `/private`. The alternative is raw JSON in an R2 Bronze bucket (cheaper, but agents could not search it) |
 | D-8 | Which folders are sent? | Only folders the owner names in `APPLE_NOTES_FOLDERS`. To start, one folder called `Sync`, so nothing is shared until the owner moves a note there on purpose |
-| D-9 | When does it run? | Daily at 06:30 with a 2-day window, plus the Share Sheet |
+| D-9 | When does it run? | Daily at 06:30 with a 2-day window, plus a manual Shortcut to pick one note or catch up |
 | D-10 | A note deleted on the phone | Stays in the store in v1 (KE-13). A later spec may add a weekly list of all note ids, and archive ids that are missing from it |
 | D-11 | How does the Worker write to the store? | Its own RS256 key: the Worker secret `KNOWLEDGE_WRITER_KEY` (PKCS#8, Infisical `/apple-notes`). For each request the Worker signs a JWT through WebCrypto that lives **60 s** (`exp − iat`; the store's verifier refuses more than 120 s), with the issuer, audience and owner subject the store expects. The phone holds only `APPLE_NOTES_TOKEN`, which opens this one route. **Prerequisite (D-11a):** today every trusted key in `KNOWLEDGE_API_AUTH_EXTRA_PUBLIC_KEY` can read and write every space and path, and the write scope also allows DELETE. Adding the Worker's key as it stands would let a leaked Worker key change any private document. So platform-knowledge-api first needs its own spec that binds a key (by `kid`) to a grant: space `knowledge-base`, prefix `apple-notes/`, methods GET and PUT only. Only then is the Worker's public key registered with that grant. Removing it revokes the Worker |
 | D-12 | Which Worker? | This one (`solo-empire-checkin`). It already hosts the SPEC-003 phone ingest and its tests, and a new Worker would add a deploy and a monitor for a single route |
@@ -186,10 +186,11 @@ Every string value in the front matter is written as a JSON string. JSON strings
 ## 11. Verification
 
 - Unit and integration tests above, with `fetch` mocked. The CI coverage gate stays at 96 % or more.
-- **Contract test against the real verifier:** a fixture JWT signed by the Worker's signing code (with a test key) is checked by platform-knowledge-api's `service_auth.AuthPolicy` in a short script run in CI or before deploy. A `fetch` mock cannot catch a wrong lifetime or claim. A second check PUTs a document with `media_type: text/markdown` into the in-memory store and expects 200.
+- **Contract test against the real verifier:** a fixture JWT signed by the Worker's signing code (with a test key) is checked by platform-knowledge-api's `service_auth.AuthPolicy` in a short script run in CI or before deploy. A `fetch` mock cannot catch a wrong lifetime or claim. A second check PUTs a document with `media_type: text/markdown` into the in-memory store and expects 201 with `document.version` 1, then PUTs again with `if_version: 1` and expects 200 with version 2.
+- **Grant check before the key goes live:** the D-11a grant enforcement must be deployed to `solo-knowledge-api` first. Then, with the Worker's key, calls against the live API must be refused for another space, a path outside `apple-notes/`, and DELETE, and allowed for GET and PUT under `apple-notes/`. Only after those checks pass is the key registered for production use. If any check fails, the key is removed from the trusted keys at once.
 - **Owner items before deploy:** approve §7 and the D-11a spec in platform-knowledge-api; create `APPLE_NOTES_TOKEN` and the writer key in Infisical `/apple-notes` (https://app.infisical.com, folder `/apple-notes`); approve adding the public key block to Railway `KNOWLEDGE_API_AUTH_EXTRA_PUBLIC_KEY` on `solo-knowledge-api` (https://railway.com/project/024d8312-5750-411b-8702-d0634153a765).
 - **After deploy:** `curl` a made-up note into folder `Sync` and check `created`; send it again and check `unchanged`; edit it and check `updated` with version 2; then read it back with the knowledge MCP and on Knowledge Hub `/private`. Delete the test document with `if_version`.
-- **TC-E2E-04:** the owner builds the Shortcut from `docs/apple-notes-shortcut.md`, moves one real note into `Sync`, runs the Shortcut once, and confirms the note on `/private`.
+- **TC-E2E-04:** the owner builds the Shortcut from `docs/apple-notes-shortcut.md`, moves one real note into `Sync`, runs the daily Shortcut once, and confirms the note on `/private`. Then the owner runs the manual Shortcut, picks that note from the list after editing it, and checks `updated`.
 
 ## 12. Change log
 
@@ -197,3 +198,4 @@ Every string value in the front matter is written as a JSON string. JSON strings
 |---|---|---|---|
 | 0.1 | 2026-11-19 | First draft | — |
 | 0.2 | 2026-11-19 | Codex review: JWT 60 s (verifier max 120 s); bare `text/markdown`; D-11a per-key grant prerequisite; version taken from the store; only a second 409 is `conflict`; v1 is list-and-read, not search; Shortcut checks `ok`; separate catch-up Shortcut; KE-14 can lose a note | — |
+| 0.3 | 2026-11-19 | Codex review 2: check `modified` again after a 409; the grant is checked live before the key goes live; manual Shortcut picks a note through Find Notes, not the Share Sheet; store 201 on create; `document_version` in logs; 401 carries a message | — |

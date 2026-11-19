@@ -21,21 +21,18 @@ v1 ยังค้นโน้ตจากชื่อหรือเนื้�
 
 ในแอป Shortcuts กด **+** แล้วเพิ่ม action ตามลำดับนี้
 
-**เลือกว่าจะส่งโน้ตไหน**
-1. เปิด Shortcut details (ไอคอน ⓘ) → เปิด **Show in Share Sheet** → Receive **Notes**
-2. **If** `Shortcut Input` **has any value** (สั่งรันจาก Share Sheet)
-   - **Set Variable** `Changed` = `Shortcut Input` (ส่งเฉพาะโน้ตที่แชร์ เงื่อนไขโฟลเดอร์ยังใช้อยู่ที่ Worker)
-3. **Otherwise** (Automation หรือกดรันเอง)
-   1. **Date** → Current Date
-   2. **Adjust Date** → Subtract `2` days ตั้งชื่อตัวแปรว่า `Since`
-   3. **Find Notes** where
-      - Folder **is** `Sync`
-      - Last Modified Date **is after** `Since`
-      - Sort by Last Modified Date, Oldest First
-   4. **Set Variable** `Changed` = ผลลัพธ์จาก Find Notes
-4. **End If**
+**หาโน้ตที่เปลี่ยน**
+1. **Date** → Current Date
+2. **Adjust Date** → Subtract `2` days ตั้งชื่อตัวแปรว่า `Since`
+3. **Find Notes** where
+   - Folder **is** `Sync`
+   - Last Modified Date **is after** `Since`
+   - Sort by Last Modified Date, Oldest First
+4. **Set Variable** `Changed` = ผลลัพธ์จาก Find Notes
 
-ห้ามใส่ **Ask for Input** ใน Shortcut ตัวนี้ เพราะ Automation จะค้างรอให้ป้อนค่า ถ้าต้องการส่งย้อนหลัง ให้ใช้ Shortcut แยกในหัวข้อ 2.1
+ห้ามใส่ **Ask for Input** ใน Shortcut ตัวนี้ เพราะ Automation จะค้างรอให้ป้อนค่า
+ถ้าต้องการส่งโน้ตเดียวหรือส่งย้อนหลัง ให้ใช้ Shortcut แยกในหัวข้อ 2.1
+(ไม่ใช้ Share Sheet ของ Notes เพราะ Share Sheet ส่งมาแค่ข้อความหรือลิงก์ ไม่มีวันที่และโฟลเดอร์ที่ Worker ต้องใช้)
 
 **ส่งทีละโน้ต**
 5. **Repeat with Each** item in `Changed`
@@ -57,7 +54,7 @@ v1 ยังค้นโน้ตจากชื่อหรือเนื้�
    6. **Get Dictionary Value** → key `ok`
    7. **If** `ok` **is** true → **Get Dictionary Value** key `status` แล้ว **Add to Variable** `Results`
    8. **Otherwise** → **Add to Variable** `Results` ค่า `failed` แล้ว **Get Dictionary Value** key `message`
-      (ถ้าว่าง ให้ใช้ key `error`) แล้ว **Add to Variable** `Errors`
+      (ถ้าว่าง ให้ใช้ key `error` และถ้าว่างทั้งคู่ ให้ใช้ข้อความ `⚠️ ส่งไม่สำเร็จ (HTTP <status code>)`) แล้ว **Add to Variable** `Errors`
    9. **End If**
 6. **End Repeat**
 7. **Count** แต่ละค่าใน `Results` (created / updated / unchanged / failed) แล้ว **Show Notification** เช่น
@@ -69,10 +66,16 @@ v1 ยังค้นโน้ตจากชื่อหรือเนื้�
 Shortcuts → **Automation** → **+** → **Time of Day** 06:30, Daily → เลือก Shortcut "ส่ง Apple Notes"
 → เลือก **Run Immediately**
 
-### 2.1 Shortcut สำหรับส่งย้อนหลัง (กดรันเองเท่านั้น)
+### 2.1 Shortcut "ส่ง Apple Notes (เลือกเอง)" (กดรันเองเท่านั้น)
 
-**Duplicate** Shortcut "ส่ง Apple Notes" แล้วตั้งชื่อใหม่ว่า "ส่ง Apple Notes (ย้อนหลัง)" ในแขนง Otherwise ให้เพิ่ม
-**Ask for Input** (Number, ค่าเริ่มต้น `7`) ไว้ก่อน Adjust Date แล้วใช้ค่านั้นแทน `2`
+**Duplicate** Shortcut "ส่ง Apple Notes" แล้วตั้งชื่อใหม่ว่า "ส่ง Apple Notes (เลือกเอง)" จากนั้นแทนส่วน "หาโน้ตที่เปลี่ยน" ด้วย
+1. **Choose from Menu** มี 2 ตัวเลือก
+   - **ส่งโน้ตเดียว:** **Find Notes** where Folder **is** `Sync` (Sort by Last Modified Date, Latest First)
+     → **Choose from List** (เลือกได้ 1 โน้ต) → **Set Variable** `Changed`
+   - **ส่งย้อนหลัง:** **Ask for Input** (Number, ค่าเริ่มต้น `7`) → **Adjust Date** Subtract จำนวนวันนั้น
+     → **Find Notes** ตามเงื่อนไขเดิม → **Set Variable** `Changed`
+2. **End Menu** แล้วใช้ส่วน "ส่งทีละโน้ต" เหมือนเดิม
+
 ห้ามผูก Shortcut นี้กับ Automation โน้ตที่ไม่ได้เปลี่ยนจะได้ผลเป็น `unchanged` จึงส่งซ้ำได้โดยไม่มีผลเสีย
 
 ## 3. ผลลัพธ์ที่จะเห็น
@@ -81,7 +84,7 @@ Shortcuts → **Automation** → **+** → **Time of Day** 06:30, Daily → เ�
 |---|---|
 | `created` / `updated` | บันทึกแล้ว (`version` คือเลข version ใน store) |
 | `unchanged` | โน้ตนี้ไม่ได้เปลี่ยนตั้งแต่ส่งครั้งก่อน ส่งซ้ำได้ ไม่มีผลเสีย |
-| HTTP 401 | secret ใน header ผิด |
+| HTTP 401 `unauthorized` | secret ใน header ผิด ให้คัดลอก `APPLE_NOTES_TOKEN` จาก Infisical `/apple-notes` ใหม่ |
 | HTTP 403 `folder-not-allowed` | โฟลเดอร์ไม่อยู่ใน `APPLE_NOTES_FOLDERS` |
 | HTTP 422 `empty` | เนื้อหาว่าง หรือเป็นโน้ตที่ล็อกไว้ (Shortcuts อ่านโน้ตที่ล็อกไม่ได้) |
 | HTTP 422 `secret-like` | มีข้อความคล้าย key หรือ token ให้ย้ายไปไว้ใน Infisical หรือ password manager |
@@ -95,4 +98,4 @@ Shortcuts → **Automation** → **+** → **Time of Day** 06:30, Daily → เ�
   วิธีแก้คือแก้ไขโน้ตที่หายไปหนึ่งครั้ง หรือคัดลอกเนื้อหาไปสร้างเป็นโน้ตใหม่
 - **KE-15:** รูป ภาพวาด เอกสารสแกน และไฟล์แนบจะไม่ถูกส่ง ส่วน checklist และตารางจะกลายเป็นข้อความ Markdown
 - **KE-16:** โน้ตที่ล็อกไว้ส่งไม่ได้
-- **KE-18:** iOS อาจข้ามการรัน Automation ช่วงที่เครื่องล็อกหรือปิดอยู่ ถ้าข้ามไปหลายวัน ให้รัน Shortcut "ส่ง Apple Notes (ย้อนหลัง)" ในหัวข้อ 2.1
+- **KE-18:** iOS อาจข้ามการรัน Automation ช่วงที่เครื่องล็อกหรือปิดอยู่ ถ้าข้ามไปหลายวัน ให้รัน Shortcut "ส่ง Apple Notes (เลือกเอง)" แล้วเลือก "ส่งย้อนหลัง" (หัวข้อ 2.1)
