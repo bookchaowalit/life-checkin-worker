@@ -5,7 +5,8 @@
 Shortcut นี้หาโน้ตในโฟลเดอร์ที่อนุญาตซึ่งถูกแก้ไขในช่วง 2 วันล่าสุด แล้วส่งไปที่
 `https://solo-empire-checkin.bookchaowalit.workers.dev/apple-notes` ทีละโน้ต
 โน้ตจะถูกเก็บเป็น Markdown แบบ private ที่ `knowledge-base:apple-notes/<note_id>.md`
-อ่านได้จาก Knowledge Hub `/private` และจาก knowledge MCP
+เปิดอ่านได้จาก Knowledge Hub `/private` และจาก knowledge MCP (ไล่รายการใต้ `apple-notes/` แล้วดูชื่อโน้ตใน front matter)
+v1 ยังค้นโน้ตจากชื่อหรือเนื้อหาไม่ได้ เพราะ path เป็นแค่ hash และระบบค้นหายังไม่ได้ทำ index ให้ store
 
 ข้อมูลไหลทางเดียวจาก iPhone ไปยังระบบ ถ้าแก้ไขในระบบ การแก้ไขนั้นจะถูกทับเมื่อโน้ตถูกแก้บน iPhone ครั้งถัดไป
 
@@ -20,19 +21,21 @@ Shortcut นี้หาโน้ตในโฟลเดอร์ที่อ�
 
 ในแอป Shortcuts กด **+** แล้วเพิ่ม action ตามลำดับนี้
 
-**รับโน้ตจาก Share Sheet (ไม่บังคับ)**
+**เลือกว่าจะส่งโน้ตไหน**
 1. เปิด Shortcut details (ไอคอน ⓘ) → เปิด **Show in Share Sheet** → Receive **Notes**
-   ถ้าไม่มี input ให้ทำต่อที่ข้อ 2 ถ้ามี input ให้ส่งเฉพาะโน้ตนั้น (ใช้ action **If** `Shortcut Input` has any value)
+2. **If** `Shortcut Input` **has any value** (สั่งรันจาก Share Sheet)
+   - **Set Variable** `Changed` = `Shortcut Input` (ส่งเฉพาะโน้ตที่แชร์ เงื่อนไขโฟลเดอร์ยังใช้อยู่ที่ Worker)
+3. **Otherwise** (Automation หรือกดรันเอง)
+   1. **Date** → Current Date
+   2. **Adjust Date** → Subtract `2` days ตั้งชื่อตัวแปรว่า `Since`
+   3. **Find Notes** where
+      - Folder **is** `Sync`
+      - Last Modified Date **is after** `Since`
+      - Sort by Last Modified Date, Oldest First
+   4. **Set Variable** `Changed` = ผลลัพธ์จาก Find Notes
+4. **End If**
 
-**หาโน้ตที่เปลี่ยน**
-2. **Date** → Current Date
-3. **Adjust Date** → Subtract `2` days ตั้งชื่อตัวแปรว่า `Since`
-   (ถ้ารันเองเพื่อส่งย้อนหลัง ให้เปลี่ยนเป็น **Ask for Input** ตัวเลข แล้วใช้เป็นจำนวนวัน)
-4. **Find Notes** where
-   - Folder **is** `Sync`
-   - Last Modified Date **is after** `Since`
-   - Sort by Last Modified Date, Oldest First
-   ตั้งชื่อผลลัพธ์ว่า `Changed`
+ห้ามใส่ **Ask for Input** ใน Shortcut ตัวนี้ เพราะ Automation จะค้างรอให้ป้อนค่า ถ้าต้องการส่งย้อนหลัง ให้ใช้ Shortcut แยกในหัวข้อ 2.1
 
 **ส่งทีละโน้ต**
 5. **Repeat with Each** item in `Changed`
@@ -51,15 +54,26 @@ Shortcut นี้หาโน้ตในโฟลเดอร์ที่อ�
       - Method: **POST**
       - Headers: `Authorization` = `Bearer <APPLE_NOTES_TOKEN>`
       - Request Body: **File** → `Dictionary` จากข้อ 5.4 (Shortcut จะส่งเป็น JSON)
-   6. **Get Dictionary Value** → key `status` (ถ้าไม่มี ให้ใช้ key `error`) แล้ว **Add to Variable** `Results`
+   6. **Get Dictionary Value** → key `ok`
+   7. **If** `ok` **is** true → **Get Dictionary Value** key `status` แล้ว **Add to Variable** `Results`
+   8. **Otherwise** → **Add to Variable** `Results` ค่า `failed` แล้ว **Get Dictionary Value** key `message`
+      (ถ้าว่าง ให้ใช้ key `error`) แล้ว **Add to Variable** `Errors`
+   9. **End If**
 6. **End Repeat**
-7. **Count** แต่ละค่าใน `Results` (created / updated / unchanged / อื่น ๆ) แล้ว **Show Notification** เช่น
+7. **Count** แต่ละค่าใน `Results` (created / updated / unchanged / failed) แล้ว **Show Notification** เช่น
    `Notes: ใหม่ 2 · อัปเดต 1 · ไม่เปลี่ยน 5 · ไม่สำเร็จ 0`
+8. **If** `Errors` **has any value** → **Show Notification** `Errors` (ข้อความ ⚠️ จาก Worker)
 
 ## 2. ตั้งให้รันเองทุกเช้า
 
 Shortcuts → **Automation** → **+** → **Time of Day** 06:30, Daily → เลือก Shortcut "ส่ง Apple Notes"
 → เลือก **Run Immediately**
+
+### 2.1 Shortcut สำหรับส่งย้อนหลัง (กดรันเองเท่านั้น)
+
+**Duplicate** Shortcut "ส่ง Apple Notes" แล้วตั้งชื่อใหม่ว่า "ส่ง Apple Notes (ย้อนหลัง)" ในแขนง Otherwise ให้เพิ่ม
+**Ask for Input** (Number, ค่าเริ่มต้น `7`) ไว้ก่อน Adjust Date แล้วใช้ค่านั้นแทน `2`
+ห้ามผูก Shortcut นี้กับ Automation โน้ตที่ไม่ได้เปลี่ยนจะได้ผลเป็น `unchanged` จึงส่งซ้ำได้โดยไม่มีผลเสีย
 
 ## 3. ผลลัพธ์ที่จะเห็น
 
@@ -77,7 +91,8 @@ Shortcuts → **Automation** → **+** → **Time of Day** 06:30, Daily → เ�
 ## ข้อจำกัด
 
 - **KE-13:** ลบโน้ตบน iPhone แล้ว โน้ตในระบบจะยังอยู่
-- **KE-14:** โน้ตสองโน้ตที่สร้างในวินาทีเดียวกัน (เช่น ทำซ้ำหรือ import) จะได้ id เดียวกัน
+- **KE-14:** โน้ตสองโน้ตที่สร้างในวินาทีเดียวกัน (เช่น ทำซ้ำหรือ import) จะได้ id เดียวกัน และโน้ตหนึ่งอาจไม่ถูกเก็บเลย
+  วิธีแก้คือแก้ไขโน้ตที่หายไปหนึ่งครั้ง หรือคัดลอกเนื้อหาไปสร้างเป็นโน้ตใหม่
 - **KE-15:** รูป ภาพวาด เอกสารสแกน และไฟล์แนบจะไม่ถูกส่ง ส่วน checklist และตารางจะกลายเป็นข้อความ Markdown
 - **KE-16:** โน้ตที่ล็อกไว้ส่งไม่ได้
-- **KE-18:** iOS อาจข้ามการรัน Automation ช่วงที่เครื่องล็อกหรือปิดอยู่ ถ้าข้ามไปหลายวัน ให้รัน Shortcut เองและเพิ่มจำนวนวันย้อนหลังในข้อ 3
+- **KE-18:** iOS อาจข้ามการรัน Automation ช่วงที่เครื่องล็อกหรือปิดอยู่ ถ้าข้ามไปหลายวัน ให้รัน Shortcut "ส่ง Apple Notes (ย้อนหลัง)" ในหัวข้อ 2.1
